@@ -4,7 +4,7 @@
 
 <p align="center">
   Tüm Claude hesaplarının kotası tek bakışta, hesap değiştirmek tek tık.<br>
-  <a href="https://github.com/realiti4/claude-swap"><code>claude-swap</code></a> (cswap) için macOS menü çubuğu uygulaması.
+  <a href="https://github.com/realiti4/claude-swap"><code>claude-swap</code></a> (cswap) için macOS menü çubuğu ve Windows sistem tepsisi uygulaması.
 </p>
 
 <p align="center">
@@ -98,6 +98,30 @@ Gereksinimler:
 - Rust toolchain
 - Xcode. gpui `runtime_shaders` özelliğiyle derlenir, bu yüzden Metal toolchain gerekmez.
 
+### Windows
+
+Swapbar Windows 10 ve 11'de de sistem tepsisinde çalışır.
+
+1. [Son sürümden](https://github.com/afatmustafa/swapbar/releases/latest) `Swapbar-windows-x64.zip` dosyasını indirin, istediğiniz yere açın ve `Swapbar.exe`'yi çalıştırın. Exe henüz kod imzalı olmadığı için SmartScreen önce sorabilir: **Ek bilgi › Yine de çalıştır**.
+2. Windows 11 yeni tepsi ikonlarını saatin yanındaki **^** okunun altına koyar. Hep görünsün diye Swapbar'ı görev çubuğuna sürükleyin.
+
+Kurulum asistanı aynı şekilde çalışır: claude-swap'ı `uv` ile kurar (`uv` yoksa onu da Astral'ın PowerShell betiğiyle). Swapbar `cswap.exe`'yi `%USERPROFILE%\.local\bin` içinde ve `PATH`'te, Claude Code'u da `claude.exe` ya da npm'in `claude.cmd`'si olarak arar.
+
+Windows'ta farklı olanlar:
+
+- **Tepsi ikonu.** Tepsi ikonunun yanında yazıya yer olmadığından, **İkondaki sayı** açıkken logonun yerine aktif hesabın 5h yüzdesi görünür. 5h ve 7d değerleri için üzerine gelin. Tıklayınca Swapbar açılır; sağ tıkta Aç, Ayarlar ve Çık vardır.
+- **Bildirimler** tepsi ikonundan gelir ve henüz **Geç** butonu yoktur. Tıklayınca Swapbar açılır; geçiş önerisi orada tek tık uzaklıktadır.
+- **Kısayollar** `Ctrl+Alt+S` ve `Ctrl+Alt+Shift+S`'dir.
+- **Girişte başlat**, Swapbar'ı `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` anahtarına ekler. Ayarlar ve önbellekler `%APPDATA%\Swapbar` altındadır.
+
+Kendiniz derlemek için Rust'ı ve Visual Studio Build Tools'u (MSVC ve Windows SDK) kurun, sonra:
+
+```powershell
+cargo build --release                  # target\release\swapbar.exe
+./scripts/package-windows.ps1          # target\Swapbar-windows-x64.zip
+python scripts/ico.py                  # AppIcon.icns'ten assets\AppIcon.ico (Pillow gerekir)
+```
+
 ## Nasıl çalışır
 
 | Veri | Kaynak |
@@ -145,6 +169,8 @@ Popover ve ayar ekran görüntülerinde demo hesaplar ve üretilmiş transkriptl
 - `src/ui.rs`: popover arayüzü
 - `src/settings.rs`: tercih modeli, LaunchAgent
 - `src/settings_ui.rs`: ayar penceresi ve About sayfası
+- `src/win/`: `statusbar`, `dialog`, `notify`, `hotkey` ve `theme` modüllerinin Windows sürümleri (tepsi ikonu, görev diyalogları, tepsi bildirimleri, RegisterHotKey) ve bunların mesajlarını alan gizli pencere
+- `build.rs`, `assets/windows/swapbar.rc`: Windows'ta exe'nin ikonu ve sürüm bilgisi
 
 ### Web sitesi
 

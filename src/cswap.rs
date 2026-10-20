@@ -268,10 +268,7 @@ struct SavedConfig {
 }
 
 fn plan_for(number: u32) -> Option<String> {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let dir = std::path::Path::new(&home)
-        .join(".claude-swap-backup")
-        .join("configs");
+    let dir = setup::home().join(".claude-swap-backup").join("configs");
     let prefix = format!(".claude-config-{number}-");
     let path = std::fs::read_dir(dir)
         .ok()?

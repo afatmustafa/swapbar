@@ -4,7 +4,7 @@
 
 <p align="center">
   Every Claude account's quota in view, one click to switch.<br>
-  A macOS menu bar app for <a href="https://github.com/realiti4/claude-swap"><code>claude-swap</code></a> (cswap).
+  A macOS menu bar app, and a Windows tray app, for <a href="https://github.com/realiti4/claude-swap"><code>claude-swap</code></a> (cswap).
 </p>
 
 <p align="center">
@@ -98,6 +98,30 @@ Requirements:
 - Rust toolchain
 - Xcode. gpui is built with the `runtime_shaders` feature, so the Metal toolchain is not needed.
 
+### Windows
+
+Swapbar also runs on Windows 10 and 11, in the system tray.
+
+1. Download `Swapbar-windows-x64.zip` from the [latest release](https://github.com/afatmustafa/swapbar/releases/latest), unzip it anywhere and run `Swapbar.exe`. The exe isn't code-signed yet, so SmartScreen may ask first: **More info › Run anyway**.
+2. Windows 11 puts new tray icons under the **^** arrow next to the clock. Drag Swapbar onto the taskbar to keep it in sight.
+
+The setup assistant works the same way: it installs claude-swap with `uv` (and `uv` with Astral's PowerShell installer if it's missing). Swapbar looks for `cswap.exe` in `%USERPROFILE%\.local\bin` and on `PATH`, and for Claude Code's `claude.exe` or npm's `claude.cmd`.
+
+What's different on Windows:
+
+- **Tray icon.** A tray icon has no room for text beside it, so with **Number in the icon** on, the active account's 5h percentage replaces the logo. Hover it for the 5h and 7d figures. Click to open Swapbar; right-click for Open, Settings and Quit.
+- **Notifications** come from the tray icon and have no **Switch** button yet. Click one to open Swapbar, where the switch suggestion is one click away.
+- **Shortcuts** are `Ctrl+Alt+S` and `Ctrl+Alt+Shift+S`.
+- **Launch at login** adds Swapbar to `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. Settings and caches live in `%APPDATA%\Swapbar`.
+
+To build it yourself, install Rust and the Visual Studio Build Tools (MSVC and the Windows SDK), then:
+
+```powershell
+cargo build --release                  # target\release\swapbar.exe
+./scripts/package-windows.ps1          # target\Swapbar-windows-x64.zip
+python scripts/ico.py                  # assets\AppIcon.ico from AppIcon.icns (needs Pillow)
+```
+
 ## How it works
 
 | Data | Source |
@@ -145,6 +169,8 @@ The popover and settings screenshots use demo accounts and generated transcripts
 - `src/ui.rs`: popover UI
 - `src/settings.rs`: preferences model, LaunchAgent
 - `src/settings_ui.rs`: settings window and About page
+- `src/win/`: the Windows versions of `statusbar`, `dialog`, `notify`, `hotkey` and `theme` (tray icon, task dialogs, tray notifications, RegisterHotKey), and the hidden window that receives their messages
+- `build.rs`, `assets/windows/swapbar.rc`: the exe's icon and version info on Windows
 
 ### Website
 

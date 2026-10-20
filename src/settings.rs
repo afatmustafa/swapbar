@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use crate::i18n::l;
+use crate::i18n::{l, os};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TitleMode {
@@ -19,7 +19,8 @@ impl TitleMode {
     pub const ALL: [TitleMode; 3] = [TitleMode::Off, TitleMode::FiveHour, TitleMode::Both];
     pub fn label(self) -> &'static str {
         match self {
-            TitleMode::Off => l("Icon only", "Yalnızca ikon"),
+            // the Windows tray shows the logo or a number, both icons
+            TitleMode::Off => os(l("Icon only", "Yalnızca ikon"), "Logo"),
             TitleMode::FiveHour => "5h",
             TitleMode::Both => "5h · 7d",
         }
@@ -181,18 +182,22 @@ impl Prefs {
 
 // ---- Launch at login via a LaunchAgent plist ----------------------------
 
+#[cfg(target_os = "macos")]
 const AGENT_LABEL: &str = "com.miova.swapbar";
 
+#[cfg(target_os = "macos")]
 fn agent_path() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_default())
+    crate::setup::home()
         .join("Library/LaunchAgents")
         .join(format!("{AGENT_LABEL}.plist"))
 }
 
+#[cfg(target_os = "macos")]
 pub fn launch_agent_installed() -> bool {
     agent_path().exists()
 }
 
+#[cfg(target_os = "macos")]
 pub fn set_launch_at_login(enabled: bool) -> Result<(), String> {
     let p = agent_path();
     if enabled {
@@ -215,6 +220,45 @@ pub fn set_launch_at_login(enabled: bool) -> Result<(), String> {
         std::fs::remove_file(&p).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+// ---- Launch at login via the Run key (Windows) --------------------------
+
+#[cfg(target_os = "windows")]
+const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+
+/// Whether the Run key starts this copy of Swapbar at sign-in.
+#[cfg(target_os = "windows")]
+pub fn launch_agent_installed() -> bool {
+    let Ok(exe) = std::env::current_exe() else {
+        return false;
+    };
+    windows_registry::CURRENT_USER
+        .open(RUN_KEY)
+        .and_then(|k| k.get_string(crate::APP_NAME))
+        .is_ok_and(|v| {
+            v.trim_matches('"')
+                .eq_ignore_ascii_case(&exe.display().to_string())
+        })
+}
+
+#[cfg(target_os = "windows")]
+pub fn set_launch_at_login(enabled: bool) -> Result<(), String> {
+    let key = windows_registry::CURRENT_USER
+        .create(RUN_KEY)
+        .map_err(|e| e.to_string())?;
+    if enabled {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        key.set_string(crate::APP_NAME, format!("\"{}\"", exe.display()))
+            .map_err(|e| e.to_string())
+    } else {
+        match key.remove_value(crate::APP_NAME) {
+            Err(e) if e.code() != windows::Win32::Foundation::ERROR_FILE_NOT_FOUND.to_hresult() => {
+                Err(e.to_string())
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 #[cfg(test)]
