@@ -1,25 +1,39 @@
+// A tray app: no console window next to it (debug builds keep one for the logs).
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
+
 mod advice;
 mod assets;
 mod attribution;
 mod cswap;
+// The platform modules share one API; the Windows versions live in `win/`.
+#[cfg_attr(target_os = "windows", path = "win/dialog.rs")]
 mod dialog;
+#[cfg_attr(target_os = "windows", path = "win/hotkey.rs")]
 mod hotkey;
 mod i18n;
+#[cfg_attr(target_os = "windows", path = "win/notify.rs")]
 mod notify;
 mod onboarding;
 mod pricing;
 mod settings;
 mod settings_ui;
 mod setup;
+#[cfg_attr(target_os = "windows", path = "win/statusbar.rs")]
 mod statusbar;
+#[cfg_attr(target_os = "windows", path = "win/theme.rs")]
 mod theme;
 mod ui;
 mod update;
 mod usage;
+#[cfg(target_os = "windows")]
+mod win;
 
 use gpui::{
-    App, AppContext, Application, AsyncApp, Bounds, Entity, Global, WindowBounds, WindowHandle,
-    WindowKind, WindowOptions, point, px, size,
+    App, AppContext, Application, AsyncApp, Bounds, Entity, Global, Pixels, Point, WindowBounds,
+    WindowHandle, WindowKind, WindowOptions, point, px, size,
 };
 use std::rc::Rc;
 use std::sync::Arc;
@@ -116,6 +130,10 @@ pub fn debug_log(msg: std::fmt::Arguments) {
     }
 }
 
+/// Settings and Setup draw under a transparent title bar beside macOS's traffic lights.
+/// Windows would hide its title bar, buttons and all, so it keeps the native one.
+pub const TRANSPARENT_TITLEBAR: bool = cfg!(target_os = "macos");
+
 /// Clicks on the status item can make the popover lose focus a moment before the
 /// click itself is handled; within this window a toggle must not reopen it.
 const TOGGLE_GRACE: Duration = Duration::from_millis(300);
@@ -124,6 +142,8 @@ impl Global for Globals {}
 
 fn main() {
     if std::env::args().nth(1).as_deref() == Some("--scan") {
+        #[cfg(target_os = "windows")]
+        win::attach_console();
         let started = std::time::Instant::now();
         let prices = PriceBook::load_with_overlay();
         let recs = usage::collect_records();
@@ -158,9 +178,15 @@ fn main() {
         }
         return;
     }
+    #[cfg(target_os = "windows")]
+    if !win::claim_single_instance() {
+        return;
+    }
     Application::new()
         .with_assets(assets::Assets)
         .run(|cx: &mut App| {
+            #[cfg(target_os = "windows")]
+            win::keep_alive(cx);
             let state = cx.new(|_| AppState::new());
             theme::apply(state.read(cx).prefs.theme);
             i18n::set(state.read(cx).prefs.language);
@@ -190,6 +216,22 @@ fn main() {
                     cx.foreground_executor()
                         .spawn(async move {
                             let _ = app.update(dismiss_window);
+                        })
+                        .detach();
+                }
+            }));
+            #[cfg(target_os = "windows")]
+            statusbar::set_menu_handler(Box::new({
+                let cx = cx.to_async();
+                move |action| {
+                    let app = cx.clone();
+                    cx.foreground_executor()
+                        .spawn(async move {
+                            let _ = app.update(|cx| match action {
+                                statusbar::MenuAction::Open => open_popover(cx),
+                                statusbar::MenuAction::Settings => open_settings(cx),
+                                statusbar::MenuAction::Quit => cx.quit(),
+                            });
                         })
                         .detach();
                 }
@@ -318,6 +360,9 @@ fn main() {
             })
             .detach();
         });
+    // macOS never gets here; Windows returns from the message loop on quit
+    #[cfg(target_os = "windows")]
+    statusbar::remove();
 }
 
 pub fn refresh_accounts(cx: &mut App) {
@@ -727,6 +772,37 @@ pub fn update_title(cx: &mut App) {
         }
     };
     g.status.set_title(&title);
+    // the tray icon fits one number; its tooltip has the full reading
+    #[cfg(target_os = "windows")]
+    {
+        let tip = match state.active_account() {
+            None => APP_NAME.to_string(),
+            Some(acc) => {
+                let u = acc.usage.as_ref();
+                let parts: Vec<String> = [
+                    ("5h", u.and_then(|u| u.five_hour.as_ref())),
+                    ("7d", u.and_then(|u| u.seven_day.as_ref())),
+                ]
+                .into_iter()
+                .filter_map(|(name, w)| {
+                    let v = mode.value(w?.pct);
+                    Some(lf!("{name} {v:.0}%", "{name} %{v:.0}"))
+                })
+                .collect();
+                if parts.is_empty() {
+                    format!("{APP_NAME} · {}", acc.name())
+                } else {
+                    format!(
+                        "{APP_NAME} · {}\n{} {}",
+                        acc.name(),
+                        parts.join(" · "),
+                        mode.suffix()
+                    )
+                }
+            }
+        };
+        g.status.set_tooltip(&tip);
+    }
 }
 
 /// Mutate prefs, persist, and refresh everything that depends on them.
@@ -830,7 +906,7 @@ pub fn open_settings(cx: &mut App) {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(gpui::TitlebarOptions {
                 title: Some(lf!("{APP_NAME} Settings", "{APP_NAME} Ayarları").into()),
-                appears_transparent: true,
+                appears_transparent: TRANSPARENT_TITLEBAR,
                 traffic_light_position: Some(point(px(12.0), px(12.0))),
             }),
             focus: true,
@@ -918,6 +994,48 @@ pub fn toggle_window(cx: &mut App) {
         return;
     }
     let status = cx.global::<Globals>().status.clone();
+    let (display_id, origin, height) = popover_placement(cx, &status);
+
+    let bounds = Bounds {
+        origin,
+        size: size(px(WINDOW_WIDTH), px(height)),
+    };
+    let handle = cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            display_id,
+            titlebar: None,
+            focus: true,
+            show: true,
+            kind: WindowKind::PopUp,
+            is_movable: false,
+            is_resizable: false,
+            is_minimizable: false,
+            window_background: gpui::WindowBackgroundAppearance::Transparent,
+            ..Default::default()
+        },
+        |window, cx| cx.new(|cx| ui::Root::new(window, cx)),
+    );
+    match handle {
+        Ok(h) => {
+            cx.global_mut::<Globals>().window = Some(h);
+            #[cfg(target_os = "windows")]
+            let _ = h.update(cx, |_, window, _| statusbar::raise_popover(window));
+            status.set_highlighted(true);
+            statusbar::watch_outside_clicks(true);
+            cx.activate(true);
+            refresh_accounts(cx);
+        }
+        Err(e) => eprintln!("pencere açılamadı: {e}"),
+    }
+}
+
+/// The popover's display, origin and height: just below the menu bar item.
+#[cfg(target_os = "macos")]
+fn popover_placement(
+    cx: &App,
+    status: &statusbar::StatusItem,
+) -> (Option<gpui::DisplayId>, Point<Pixels>, f32) {
     let geo = status.geometry();
     if std::env::var("SWAPBAR_DEBUG").is_ok() {
         eprintln!(
@@ -947,35 +1065,27 @@ pub fn toggle_window(cx: &mut App) {
         }
         None => (None, point(px(200.0), px(30.0))),
     };
+    (display_id, origin, height)
+}
 
-    let bounds = Bounds {
-        origin,
-        size: size(px(WINDOW_WIDTH), px(height)),
-    };
-    let handle = cx.open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            display_id,
-            titlebar: None,
-            focus: true,
-            show: true,
-            kind: WindowKind::PopUp,
-            is_movable: false,
-            is_resizable: false,
-            is_minimizable: false,
-            window_background: gpui::WindowBackgroundAppearance::Transparent,
-            ..Default::default()
-        },
-        |window, cx| cx.new(|cx| ui::Root::new(window, cx)),
-    );
-    match handle {
-        Ok(h) => {
-            cx.global_mut::<Globals>().window = Some(h);
-            status.set_highlighted(true);
-            statusbar::watch_outside_clicks(true);
-            cx.activate(true);
-            refresh_accounts(cx);
-        }
-        Err(e) => eprintln!("pencere açılamadı: {e}"),
-    }
+/// The popover's display, origin and height: beside the tray icon, on the taskbar's side.
+#[cfg(target_os = "windows")]
+fn popover_placement(
+    cx: &App,
+    status: &statusbar::StatusItem,
+) -> (Option<gpui::DisplayId>, Point<Pixels>, f32) {
+    let bounds = status.popover_bounds(WINDOW_WIDTH, WINDOW_HEIGHT);
+    let display = cx
+        .displays()
+        .into_iter()
+        .find(|d| d.bounds().contains(&bounds.center()));
+    debug_log(format_args!(
+        "popover bounds {bounds:?} on {:?}",
+        display.as_ref().map(|d| d.id())
+    ));
+    (
+        display.map(|d| d.id()),
+        bounds.origin,
+        f32::from(bounds.size.height),
+    )
 }

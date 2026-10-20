@@ -2,7 +2,6 @@
 //! of the app shells out to `cswap`, so no HTTP stack is linked in.
 
 use serde::Deserialize;
-use std::process::Command;
 
 const LATEST_URL: &str = "https://api.github.com/repos/afatmustafa/swapbar/releases/latest";
 
@@ -24,7 +23,7 @@ struct ApiRelease {
 
 /// `Some` when the latest published release is newer than `current`.
 pub fn check(current: &str) -> Result<Option<Release>, String> {
-    let out = Command::new("/usr/bin/curl")
+    let out = crate::setup::curl()
         .args([
             "--silent",
             "--show-error",
