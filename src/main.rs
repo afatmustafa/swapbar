@@ -39,7 +39,7 @@ pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub struct AppState {
     pub accounts: Option<cswap::AccountList>,
     pub accounts_error: Option<String>,
-    pub accounts_loading: bool,
+    pub accounts_fetch: cswap::ListFetch,
     pub switching: Option<u32>,
     pub records: Arc<Vec<Rec>>,
     pub prices: Arc<PriceBook>,
@@ -63,7 +63,7 @@ impl AppState {
         AppState {
             accounts: None,
             accounts_error: None,
-            accounts_loading: false,
+            accounts_fetch: cswap::ListFetch::default(),
             switching: None,
             records: Arc::new(Vec::new()),
             prices: Arc::new(PriceBook::default()),
@@ -322,31 +322,42 @@ fn main() {
 
 pub fn refresh_accounts(cx: &mut App) {
     let state = cx.global::<Globals>().state.clone();
-    let already = state.read(cx).accounts_loading;
-    if already {
+    let start = state.update(cx, |s, cx| {
+        let start = s.accounts_fetch.request();
+        if start {
+            cx.notify();
+        }
+        start
+    });
+    if !start {
         return;
     }
-    state.update(cx, |s, cx| {
-        s.accounts_loading = true;
-        cx.notify();
-    });
     cx.spawn(async move |cx: &mut AsyncApp| {
         let result = cx
             .background_executor()
             .spawn(async { cswap::list() })
             .await;
-        let _ = state.update(cx, |s, cx| {
-            s.accounts_loading = false;
-            match result {
-                Ok(list) => {
-                    s.accounts = Some(list);
-                    s.accounts_error = None;
+        let Ok(current) = state.update(cx, |s, cx| {
+            let current = s.accounts_fetch.finish();
+            if current {
+                match result {
+                    Ok(list) => {
+                        s.accounts = Some(list);
+                        s.accounts_error = None;
+                    }
+                    Err(e) => s.accounts_error = Some(e),
                 }
-                Err(e) => s.accounts_error = Some(e),
             }
             cx.notify();
-        });
+            current
+        }) else {
+            return;
+        };
         let _ = cx.update(|cx| {
+            if !current {
+                refresh_accounts(cx);
+                return;
+            }
             update_title(cx);
             notify_quota_changes(cx);
             offer_setup_once(cx);
