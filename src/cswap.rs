@@ -234,6 +234,37 @@ fn strip_ansi(s: &str) -> String {
     out
 }
 
+/// One `cswap list` at a time. A request while one runs (a switch landing during the
+/// poll) isn't dropped: the list in flight may predate it, so it is fetched again.
+#[derive(Debug, Clone, Default)]
+pub struct ListFetch {
+    running: bool,
+    queued: bool,
+}
+
+impl ListFetch {
+    /// True when the caller should start a fetch.
+    pub fn request(&mut self) -> bool {
+        if self.running {
+            self.queued = true;
+            return false;
+        }
+        self.running = true;
+        true
+    }
+
+    /// The fetch landed. False when a request came in meanwhile: drop the result and
+    /// request again.
+    pub fn finish(&mut self) -> bool {
+        self.running = false;
+        !std::mem::take(&mut self.queued)
+    }
+
+    pub fn running(&self) -> bool {
+        self.running
+    }
+}
+
 pub fn list() -> Result<AccountList, String> {
     let raw = run(&["list", "--json"])?;
     let mut list: AccountList = serde_json::from_str(&raw)
@@ -485,6 +516,34 @@ mod tests {
         let c = &list.accounts[2];
         assert!(c.usage.is_none());
         assert_eq!(c.usage_status.as_deref(), Some("token expired"));
+    }
+
+    #[test]
+    fn one_list_fetch_runs_at_a_time() {
+        let mut f = ListFetch::default();
+        assert!(f.request(), "the first request starts a fetch");
+        assert!(f.running());
+        assert!(!f.request(), "a second one waits for it");
+        assert!(!f.request());
+    }
+
+    #[test]
+    fn a_request_during_a_fetch_drops_its_result_and_fetches_again() {
+        let mut f = ListFetch::default();
+        f.request();
+        f.request(); // e.g. a switch landed while the poll was running
+        assert!(!f.finish(), "the result in flight may predate the switch");
+        assert!(!f.running());
+        assert!(f.request(), "so a new fetch starts");
+        assert!(f.finish(), "and its result is current");
+    }
+
+    #[test]
+    fn a_lone_fetch_result_is_current() {
+        let mut f = ListFetch::default();
+        f.request();
+        assert!(f.finish());
+        assert!(!f.running());
     }
 
     #[test]

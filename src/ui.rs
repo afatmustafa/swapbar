@@ -992,7 +992,7 @@ impl Render for Root {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::theme::sync(cx);
         let s = self.state.read(cx).clone();
-        let busy = s.accounts_loading || s.usage_scanning || s.switching.is_some();
+        let busy = s.accounts_fetch.running() || s.usage_scanning || s.switching.is_some();
 
         let show_usage = s.prefs.show_usage;
         let suggestion = s
