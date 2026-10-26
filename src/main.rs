@@ -804,10 +804,14 @@ pub fn update_title(cx: &mut App) {
             let d7 = u
                 .and_then(|u| u.seven_day.as_ref())
                 .map(|w| format!("{:.0}%", mode.value(w.pct)));
+            // a seat billed by usage shows its spend limit, as `cswap menubar` does
+            let spend = u
+                .and_then(|u| u.spend_only())
+                .map(|s| format!(" $ {:.0}%", mode.value(s.pct)));
             match (tm, h5, d7) {
                 (TitleMode::Both, Some(a), Some(b)) => format!(" {a}·{b}"),
                 (_, Some(a), _) => format!(" {a}"),
-                _ => String::new(),
+                _ => spend.unwrap_or_default(),
             }
         }
     };

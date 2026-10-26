@@ -36,6 +36,8 @@ pub struct Window {
     pub will_last_to_reset: Option<bool>,
 }
 
+/// A monthly spending limit (Anthropic's `extra_usage`): pay-as-you-go credits on top of
+/// a plan, or the only limit of a seat billed by usage, such as some Enterprise seats.
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Spend {
@@ -44,6 +46,46 @@ pub struct Spend {
     pub pct: f64,
     #[serde(default)]
     pub currency: Option<String>,
+    #[serde(default)]
+    pub resets_at: Option<String>,
+    #[serde(default)]
+    pub countdown: Option<String>,
+    #[serde(default)]
+    pub clock: Option<String>,
+}
+
+impl Spend {
+    /// The currency code; cswap reports USD when the API doesn't say.
+    pub fn currency(&self) -> &str {
+        self.currency
+            .as_deref()
+            .filter(|c| !c.is_empty())
+            .unwrap_or("USD")
+    }
+
+    /// "$13.50 / $50.00", or "13.50 / 50.00 EUR" in another currency.
+    pub fn amounts(&self) -> String {
+        match self.currency() {
+            "USD" => format!(
+                "{} / {}",
+                crate::usage::format_usd(self.used),
+                crate::usage::format_usd(self.limit)
+            ),
+            code => format!("{:.2} / {:.2} {code}", self.used, self.limit),
+        }
+    }
+
+    /// The limit as a quota window, so it is drawn and watched like 5h and 7d.
+    pub fn window(&self) -> Window {
+        Window {
+            pct: self.pct,
+            resets_at: self.resets_at.clone(),
+            countdown: self.countdown.clone(),
+            clock: self.clock.clone(),
+            name: Some(self.currency().to_string()),
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -57,6 +99,17 @@ pub struct Usage {
     pub scoped: Vec<Window>,
     #[serde(default, deserialize_with = "lenient")]
     pub spend: Option<Spend>,
+}
+
+impl Usage {
+    /// The spend limit when it is the account's only limit: no 5h or 7d window, as on a
+    /// seat billed by usage. Beside a plan's windows it only covers usage past them.
+    pub fn spend_only(&self) -> Option<&Spend> {
+        if self.five_hour.is_some() || self.seven_day.is_some() {
+            return None;
+        }
+        self.spend.as_ref()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -685,6 +738,38 @@ mod tests {
         )
         .unwrap();
         assert_eq!(list.duplicate_slots(), [1, 2, 12]);
+    }
+
+    #[test]
+    fn reads_a_spend_limit() {
+        // A seat billed by usage: no 5h or 7d window, only the monthly spend limit.
+        let u: Usage = serde_json::from_str(
+            r#"{"spend": {"used": 13.5, "limit": 50, "pct": 27, "currency": "USD",
+                "resetsAt": "2026-11-01T00:00:00+00:00", "countdown": "5d 7h", "clock": "Nov 1 03:00"},
+                "scoped": []}"#,
+        )
+        .unwrap();
+        let s = u.spend_only().expect("the spend limit is the only limit");
+        assert_eq!(s.amounts(), "$13.50 / $50.00");
+        let w = s.window();
+        assert_eq!((w.pct, w.name.as_deref()), (27.0, Some("USD")));
+        assert_eq!(w.countdown.as_deref(), Some("5d 7h"));
+
+        let eur = Spend {
+            used: 4.0,
+            limit: 20.0,
+            currency: Some("EUR".into()),
+            ..Default::default()
+        };
+        assert_eq!(eur.amounts(), "4.00 / 20.00 EUR");
+        assert_eq!(Spend::default().currency(), "USD");
+
+        // beside a plan's windows it only covers usage past them
+        let with_plan: Usage = serde_json::from_str(
+            r#"{"fiveHour": {"pct": 10}, "spend": {"used": 1, "limit": 10, "pct": 10}}"#,
+        )
+        .unwrap();
+        assert!(with_plan.spend_only().is_none() && with_plan.spend.is_some());
     }
 
     #[test]

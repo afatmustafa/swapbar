@@ -27,7 +27,7 @@ Swapbar tüm cswap hesaplarının 5h, 7d ve model bazlı (Fable) kotalarını te
 ## Özellikler
 
 - **Kurulum asistanı.** İlk açılışta Swapbar, Claude Code ve claude-swap'ın kurulu olup olmadığına bakar, claude-swap eksikse `uv` ile kurar (gerekirse önce `uv`'yi de kurar) ve hesaplarınızı tek tek ekler: her hesap tarayıcıda `claude auth login` ile giriş yapar, cswap girişi saklar ve Claude Code kullandığı hesaba geri döner.
-- **Tüm hesaplar tek bakışta.** Her hesap için paketi (Max 20x, Max 5x, Pro, Team Premium/Standard), 5h, 7d ve model bazlı (Fable) çubuklar ve sıfırlanmaya kalan süre. Çubuk düşük kota seviyesinde (varsayılan %15 kalan) kırmızıya, bunun 25 puan üstünde sarıya döner.
+- **Tüm hesaplar tek bakışta.** Her hesap için paketi (Max 20x, Max 5x, Pro, Team Premium/Standard), 5h, 7d ve model bazlı (Fable) çubuklar ve sıfırlanmaya kalan süre; varsa harcama limiti de (ör. "$13.50 / $50.00"). Sadece kullanıma göre faturalanan hesaplarda (bazı Enterprise hesapları gibi) kota bu harcama limitidir. Çubuk düşük kota seviyesinde (varsayılan %15 kalan) kırmızıya, bunun 25 puan üstünde sarıya döner.
 - **Tek tıkla geçiş.** Pasif bir hesaba tıklamak `cswap switch` çalıştırır. Aktif hesap **current**, otomatik rotasyon dışındaki hesaplar **paused** olarak işaretlenir.
 - **Tempo uyarıları.** Bir hesap bir pencereyi çok hızlı harcıyorsa, çubuktaki işaret eşit tempoda nerede olması gerektiğini gösterir; pencere sıfırlanmadan bitecekse satır ne zaman biteceğini söyler. Aktif hesap için pencere başına bir bildirim gelir.
 - **Geçiş önerisi.** Aktif hesabın en dar penceresi düşük kota seviyesine (varsayılan %15 kalan) inince, en çok kotası kalan hesabı gösteren bir banner çıkar ve tek tıkla o hesaba geçilir. Bu hesap listede **suggested** olarak işaretlenir.

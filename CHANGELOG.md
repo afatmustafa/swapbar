@@ -3,6 +3,12 @@
 All notable changes to Swapbar. The website shows the same notes at
 [swapbar.afat.me/changelog](https://swapbar.afat.me/changelog).
 
+## Unreleased
+
+### Added
+
+- **Spend limits.** Accounts with a monthly spend limit (Anthropic's extra usage) get a **USD** row with what's spent, the limit and when it resets: "$13.50 / $50.00 · 5d 7h". Seats billed by usage alone, such as some Enterprise seats, have no 5h or 7d window; for them the spend limit is the quota. It colours the bar, decides the switch suggestion and the shortcut's pick, sends the low-quota and reset notifications, and shows in the menu bar title. Beside a plan's 5h and 7d windows it stays informational, as in cswap.
+
 ## 0.4.1
 
 ### Fixed

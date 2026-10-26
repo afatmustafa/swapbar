@@ -172,13 +172,24 @@ fn pace_marker(w: Option<&UsageWindow>, mode: PercentMode) -> Option<f64> {
     Some(mode.value(w.expected_pct?) / 100.0)
 }
 
-fn quota_row(label: &str, w: Option<&UsageWindow>, prefs: &Prefs, pace: bool) -> impl IntoElement {
+/// One window's bar. `amount` ("$13.50 / $50.00") goes before the reset time.
+fn quota_row(
+    label: &str,
+    w: Option<&UsageWindow>,
+    prefs: &Prefs,
+    pace: bool,
+    amount: Option<String>,
+) -> impl IntoElement {
     let mode = prefs.percent_mode;
     let marker = pace_marker(w, mode).filter(|_| pace);
     let remaining = w.map(|w| (100.0 - w.pct).clamp(0.0, 100.0));
     let shown = w.map(|w| mode.value(w.pct));
+    // beside an amount there is room for the countdown only
+    let clock = w
+        .and_then(|w| w.clock.as_ref())
+        .filter(|_| amount.is_none());
     let reset = if prefs.show_reset_times {
-        w.and_then(|w| match (&w.countdown, &w.clock) {
+        w.and_then(|w| match (&w.countdown, clock) {
             (Some(cd), Some(clock)) => Some(format!(
                 "{} · {}",
                 crate::i18n::time(cd),
@@ -187,9 +198,12 @@ fn quota_row(label: &str, w: Option<&UsageWindow>, prefs: &Prefs, pace: bool) ->
             (Some(cd), None) => Some(crate::i18n::time(cd)),
             _ => None,
         })
-        .unwrap_or_default()
     } else {
-        String::new()
+        None
+    };
+    let reset = match (amount, reset) {
+        (Some(a), Some(r)) => format!("{a} · {r}"),
+        (a, r) => a.or(r).unwrap_or_default(),
     };
     let color = remaining
         .map(|r| remaining_color(r, prefs))
@@ -407,6 +421,7 @@ fn account_row(
     let five = usage.and_then(|u| u.five_hour.as_ref());
     let seven = usage.and_then(|u| u.seven_day.as_ref());
     let scoped: Vec<&UsageWindow> = usage.map(|u| u.scoped.iter().collect()).unwrap_or_default();
+    let spend = usage.and_then(|u| u.spend.as_ref());
 
     let status: (String, u32) = if switching == Some(number) {
         (l("switching…", "geçiliyor…").into(), t().secondary)
@@ -485,7 +500,11 @@ fn account_row(
 
     // a stale reading's pace is hours old
     let pace = prefs.show_pace && !acc.stale;
-    let mut windows: Vec<(&str, Option<&UsageWindow>)> = vec![("5h", five)];
+    let mut windows: Vec<(&str, Option<&UsageWindow>)> = Vec::new();
+    // a seat billed by usage has no 5h window to show as missing
+    if five.is_some() || spend.is_none() {
+        windows.push(("5h", five));
+    }
     if seven.is_some() && prefs.show_seven_day {
         windows.push(("7d", seven));
     }
@@ -498,7 +517,17 @@ fn account_row(
     }
     let mut quotas = div().flex().flex_col().gap_0p5().pl(px(15.0));
     for (label, w) in &windows {
-        quotas = quotas.child(quota_row(label, *w, prefs, pace));
+        quotas = quotas.child(quota_row(label, *w, prefs, pace, None));
+    }
+    if let Some(s) = spend {
+        let w = s.window();
+        quotas = quotas.child(quota_row(
+            s.currency(),
+            Some(&w),
+            prefs,
+            false,
+            Some(s.amounts()),
+        ));
     }
     if pace {
         let now = chrono::Utc::now();

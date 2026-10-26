@@ -40,13 +40,18 @@ pub fn level(remaining: f64, prefs: &Prefs) -> Level {
     }
 }
 
-/// Percentage left in the account's tightest window (5h or 7d), or `None` without usage data.
+/// The spend limit's name in notifications and the watch, beside "5h" and "7d".
+pub const SPEND: &str = "USD";
+
+/// Percentage left in the account's tightest window (5h or 7d), or in its spend limit when
+/// that is its only limit; `None` without usage data.
 pub fn headroom(acc: &Account) -> Option<f64> {
     if acc.usage_status.as_deref().is_some_and(|s| s != "ok") {
         return None;
     }
     let u = acc.usage.as_ref()?;
-    [u.five_hour.as_ref(), u.seven_day.as_ref()]
+    let spend = u.spend_only().map(|s| s.window());
+    [u.five_hour.as_ref(), u.seven_day.as_ref(), spend.as_ref()]
         .into_iter()
         .flatten()
         .map(|w| (100.0 - w.pct).clamp(0.0, 100.0))
@@ -189,7 +194,12 @@ impl Watch {
             let Some(u) = acc.usage.as_ref() else {
                 continue;
             };
-            for (window, w) in [("5h", &u.five_hour), ("7d", &u.seven_day)] {
+            let spend = u.spend_only().map(|s| s.window());
+            for (window, w) in [
+                ("5h", u.five_hour.as_ref()),
+                ("7d", u.seven_day.as_ref()),
+                (SPEND, spend.as_ref()),
+            ] {
                 let Some(w) = w else { continue };
                 let key = (acc.number, window);
                 next.insert(key, w.pct);
@@ -363,6 +373,56 @@ mod tests {
         let mut broken = acc(1, true, 0.0, None);
         broken.usage_status = Some("rate limited".into());
         assert_eq!(headroom(&broken), None);
+    }
+
+    /// A seat billed by usage: only a spend limit, `used` percent of it spent.
+    fn spend_only(number: u32, active: bool, used: f64) -> Account {
+        Account {
+            number,
+            email: format!("a{number}@example.com"),
+            active,
+            usage_status: Some("ok".into()),
+            usage: Some(Usage {
+                spend: Some(crate::cswap::Spend {
+                    used: used / 2.0,
+                    limit: 50.0,
+                    pct: used,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_spend_limit_counts_only_without_windows() {
+        assert_eq!(headroom(&spend_only(1, true, 70.0)), Some(30.0));
+        // with a plan, spend is pay-as-you-go past the windows and doesn't lower the room
+        let mut plan = acc(1, true, 20.0, None);
+        plan.usage.as_mut().unwrap().spend = spend_only(1, true, 95.0).usage.unwrap().spend;
+        assert_eq!(headroom(&plan), Some(80.0));
+        // and a spend-only account can be suggested and switched to
+        let l = list(vec![acc(1, true, 90.0, None), spend_only(2, false, 10.0)]);
+        assert_eq!(suggestion(&l, &prefs()).map(|s| s.number), Some(2));
+    }
+
+    #[test]
+    fn low_and_reset_cover_the_spend_limit() {
+        let p = prefs();
+        let mut w = Watch::default();
+        w.update(&list(vec![spend_only(1, true, 70.0)]), &p);
+        let events = w.update(&list(vec![spend_only(1, true, 90.0)]), &p);
+        assert!(
+            matches!(events.as_slice(), [Event::Low { window: SPEND, .. }]),
+            "{events:?}"
+        );
+        // a new month brings the limit back
+        let events = w.update(&list(vec![spend_only(1, true, 0.0)]), &p);
+        assert!(
+            matches!(events.as_slice(), [Event::Reset { window: SPEND, .. }]),
+            "{events:?}"
+        );
     }
 
     #[test]
