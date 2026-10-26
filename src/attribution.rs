@@ -198,7 +198,7 @@ impl Attribution {
 }
 
 pub fn backup_dir() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".claude-swap-backup")
+    crate::setup::home().join(".claude-swap-backup")
 }
 
 /// Source of a projects directory, given the profile directory that contains it.

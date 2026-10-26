@@ -3,7 +3,6 @@
 //! stack is linked in.
 
 use serde::Deserialize;
-use std::process::Command;
 
 const LATEST_URL: &str = "https://api.github.com/repos/afatmustafa/swapbar/releases/latest";
 const CSWAP_PYPI_URL: &str = "https://pypi.org/pypi/claude-swap/json";
@@ -63,7 +62,7 @@ pub fn check_cswap(installed: &str) -> Result<Option<CswapUpdate>, String> {
 }
 
 fn fetch(url: &str, accept: &str) -> Result<Vec<u8>, String> {
-    let out = Command::new("/usr/bin/curl")
+    let out = crate::setup::curl()
         .args([
             "--silent",
             "--show-error",

@@ -379,10 +379,7 @@ struct SavedConfig {
 }
 
 fn plan_for(number: u32) -> Option<String> {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let dir = std::path::Path::new(&home)
-        .join(".claude-swap-backup")
-        .join("configs");
+    let dir = setup::home().join(".claude-swap-backup").join("configs");
     let prefix = format!(".claude-config-{number}-");
     let path = std::fs::read_dir(dir)
         .ok()?
@@ -490,7 +487,31 @@ pub fn set_alias(number: u32, alias: Option<&str>) -> Result<(), String> {
 
 /// Update claude-swap with the tool that installed it (`uv tool` or `pipx`).
 pub fn upgrade() -> Result<(), String> {
+    if cfg!(target_os = "windows") {
+        // There `cswap upgrade` only prints the uv command: a running cswap.exe can't be
+        // replaced. Swapbar isn't cswap, so it can run that command itself.
+        return upgrade_with_uv();
+    }
     run(&["upgrade"]).map(|_| ())
+}
+
+/// `uv tool upgrade claude-swap`, the command `cswap upgrade` runs for uv installs.
+fn upgrade_with_uv() -> Result<(), String> {
+    const LABEL: &str = "uv tool upgrade claude-swap";
+    let uv = setup::find(Tool::Uv).ok_or(lf!(
+        "uv isn't installed. Update claude-swap the way you installed it, e.g. `{LABEL}`.",
+        "uv kurulu değil. claude-swap'ı kurduğun yolla güncelle, örneğin `{LABEL}`."
+    ))?;
+    let out = setup::command(&uv)
+        .args(["tool", "upgrade", "claude-swap"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("{LABEL}: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    Err(format!("{LABEL}: {}", strip_ansi(&msg)))
 }
 
 /// Exchange two accounts' slot numbers.

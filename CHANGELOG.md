@@ -3,6 +3,12 @@
 All notable changes to Swapbar. The website shows the same notes at
 [swapbar.afat.me/changelog](https://swapbar.afat.me/changelog).
 
+## Unreleased
+
+### Added
+
+- **Windows.** Swapbar runs on Windows 10 and 11 as a system tray app, from the same code: the popover, Settings, the setup assistant, account management, notifications, global shortcuts (`Ctrl+Alt+S`, `Ctrl+Alt+Shift+S`) and launch at login. The tray icon shows the active account's 5h percentage in place of the logo, with both windows in its tooltip, and a right-click menu opens Settings or quits. Notifications have no **Switch** button yet; clicking one opens Swapbar. Releases include `Swapbar-windows-x64.zip`.
+
 ## 0.4.1
 
 ### Fixed

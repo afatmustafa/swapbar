@@ -30,26 +30,55 @@ impl Tool {
         }
     }
 
+    /// File names to look for. On Windows npm installs Claude Code as `claude.cmd`
+    /// (its extensionless `claude` is a shell script), and there is no Homebrew.
+    fn file_names(self) -> Vec<String> {
+        if cfg!(target_os = "windows") {
+            match self {
+                Tool::Brew => vec![],
+                Tool::Claude => vec!["claude.exe".into(), "claude.cmd".into()],
+                t => vec![format!("{}.exe", t.name())],
+            }
+        } else {
+            vec![self.name().to_string()]
+        }
+    }
+
     /// `CLAUDE_BIN`, `CSWAP_BIN`, … point at a specific binary (tests, odd installs).
     fn env_override(self) -> String {
         format!("{}_BIN", self.name().to_uppercase())
     }
 }
 
-fn home() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_default())
+/// The home folder as cswap and Claude Code see it. A Windows GUI app usually has no
+/// HOME, and both tools use USERPROFILE there anyway.
+pub fn home() -> PathBuf {
+    let var = if cfg!(target_os = "windows") {
+        "USERPROFILE"
+    } else {
+        "HOME"
+    };
+    PathBuf::from(std::env::var_os(var).unwrap_or_default())
 }
 
-/// Where installers put these tools. Apps started from Finder get a bare PATH, so we
-/// look in the usual places ourselves, then in PATH.
+/// Where installers put these tools. Apps started from Finder (or at Windows sign-in) get
+/// a bare PATH, so we look in the usual places ourselves, then in PATH.
 fn search_dirs() -> Vec<PathBuf> {
     let mut dirs = vec![
-        home().join(".local/bin"),
-        home().join(".claude/local"),
-        home().join(".cargo/bin"),
-        PathBuf::from("/opt/homebrew/bin"),
-        PathBuf::from("/usr/local/bin"),
+        home().join(".local").join("bin"),
+        home().join(".claude").join("local"),
+        home().join(".cargo").join("bin"),
     ];
+    if cfg!(target_os = "windows") {
+        let var = |name: &str| std::env::var_os(name).map(PathBuf::from);
+        dirs.extend(var("APPDATA").map(|d| d.join("npm")));
+        dirs.extend(var("LOCALAPPDATA").map(|d| d.join("Microsoft").join("WinGet").join("Links")));
+    } else {
+        dirs.extend([
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+        ]);
+    }
     if let Some(path) = std::env::var_os("PATH") {
         dirs.extend(std::env::split_paths(&path));
     }
@@ -61,9 +90,10 @@ pub fn find(tool: Tool) -> Option<PathBuf> {
         let p = PathBuf::from(p);
         return p.exists().then_some(p);
     }
+    let names = tool.file_names();
     search_dirs()
         .into_iter()
-        .map(|d| d.join(tool.name()))
+        .flat_map(|d| names.iter().map(move |n| d.join(n)))
         .find(|p| p.is_file())
 }
 
@@ -74,6 +104,34 @@ pub fn command(program: &Path) -> Command {
     if let Ok(path) = std::env::join_paths(search_dirs()) {
         cmd.env("PATH", path);
     }
+    // Python (cswap, uv's tools) would write the console code page, not UTF-8, to a pipe
+    cmd.env("PYTHONUTF8", "1").env("PYTHONIOENCODING", "utf-8");
+    no_console(&mut cmd);
+    cmd
+}
+
+/// Spawned from a GUI app, a console program opens a console window of its own on Windows.
+pub fn no_console(cmd: &mut Command) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = cmd;
+}
+
+/// The system curl: /usr/bin/curl on macOS, System32's curl.exe on Windows 10 and later.
+pub fn curl() -> Command {
+    let program = if cfg!(target_os = "windows") {
+        let root = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+        PathBuf::from(root).join("System32").join("curl.exe")
+    } else {
+        PathBuf::from("/usr/bin/curl")
+    };
+    let mut cmd = Command::new(program);
+    no_console(&mut cmd);
     cmd
 }
 
@@ -107,8 +165,34 @@ pub fn detect() -> Tools {
 }
 
 /// Astral's installer; it puts `uv` in ~/.local/bin.
+#[cfg(not(target_os = "windows"))]
 pub const UV_INSTALLER: &str = "curl -LsSf https://astral.sh/uv/install.sh | sh";
+#[cfg(not(target_os = "windows"))]
 pub const CLAUDE_INSTALLER: &str = "curl -fsSL https://claude.ai/install.sh | bash";
+/// The PowerShell installers; uv goes to %USERPROFILE%\.local\bin there too.
+#[cfg(target_os = "windows")]
+pub const UV_INSTALLER: &str = "irm https://astral.sh/uv/install.ps1 | iex";
+#[cfg(target_os = "windows")]
+pub const CLAUDE_INSTALLER: &str = "irm https://claude.ai/install.ps1 | iex";
+
+/// The shell that runs the installers.
+fn installer_shell(script: &str) -> Command {
+    if cfg!(target_os = "windows") {
+        let mut cmd = command(Path::new("powershell.exe"));
+        cmd.args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "ByPass",
+            "-Command",
+            script,
+        ]);
+        cmd
+    } else {
+        let mut cmd = command(Path::new("/bin/sh"));
+        cmd.args(["-c", script]);
+        cmd
+    }
+}
 
 /// The shell commands `install_cswap` will run, for the window to show up front.
 pub fn install_plan(tools: &Tools) -> Vec<String> {
@@ -174,11 +258,7 @@ pub fn install_cswap(log: Log) -> Result<(), String> {
                     cmd.args(["install", "uv"]);
                     run_logged(cmd, "brew install uv", log)?;
                 }
-                None => {
-                    let mut cmd = command(Path::new("/bin/sh"));
-                    cmd.args(["-c", UV_INSTALLER]);
-                    run_logged(cmd, UV_INSTALLER, log)?;
-                }
+                None => run_logged(installer_shell(UV_INSTALLER), UV_INSTALLER, log)?,
             }
             find(Tool::Uv).ok_or(l(
                 "uv was installed but can't be found",

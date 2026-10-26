@@ -14,8 +14,14 @@ use crate::usage::{Summary, format_tokens, format_usd};
 use crate::{AppState, Globals};
 
 /// System UI font for labels; a monospaced face only where digits must line up.
+#[cfg(target_os = "macos")]
 const UI_FONT: &str = ".AppleSystemUIFont";
+#[cfg(target_os = "macos")]
 const NUM_FONT: &str = "Menlo";
+#[cfg(target_os = "windows")]
+const UI_FONT: &str = "Segoe UI";
+#[cfg(target_os = "windows")]
+const NUM_FONT: &str = "Consolas";
 
 fn c(hex: u32) -> Hsla {
     rgb(hex).into()

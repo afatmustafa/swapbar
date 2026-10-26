@@ -19,9 +19,13 @@ use crate::pricing::{PriceBook, Rate};
 const LOOKBACK_DAYS: i64 = 31;
 const CACHE_VERSION: u32 = 2;
 
+/// `~/.config/swapbar`, or `%APPDATA%\Swapbar` on Windows.
 pub fn data_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_default();
-    PathBuf::from(home).join(".config").join("swapbar")
+    #[cfg(target_os = "windows")]
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        return PathBuf::from(appdata).join("Swapbar");
+    }
+    crate::setup::home().join(".config").join("swapbar")
 }
 
 /// Every Claude Code `projects` directory we know about: the default
@@ -29,7 +33,7 @@ pub fn data_dir() -> PathBuf {
 /// claude-swap session profiles. Deduped by canonical path, each with the
 /// source that decides which account its records count for.
 fn claude_projects_dirs() -> Vec<(PathBuf, Source)> {
-    let home = PathBuf::from(std::env::var("HOME").unwrap_or_default());
+    let home = crate::setup::home();
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(cfg) = std::env::var("CLAUDE_CONFIG_DIR") {
         candidates.push(PathBuf::from(cfg).join("projects"));
