@@ -4,6 +4,7 @@
 //! The handlers only queue work for gpui, so they never re-enter an update.
 
 use std::cell::Cell;
+use std::sync::atomic::{AtomicIsize, Ordering};
 
 use gpui::{
     App, AppContext, Bounds, Context, IntoElement, Render, Window, WindowBounds, WindowKind,
@@ -17,9 +18,11 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, FindWindowW, PostMessageW, RegisterClassW,
-    RegisterWindowMessageW, SW_SHOWDEFAULT, WINDOW_EX_STYLE, WM_APP, WM_HOTKEY, WNDCLASSW,
-    WS_EX_TOOLWINDOW, WS_POPUP,
+    CallWindowProcW, CreateWindowExW, DefWindowProcW, FindWindowW, GWL_EXSTYLE, GWLP_WNDPROC,
+    GetWindowLongPtrW, PostMessageW, RegisterClassW, RegisterWindowMessageW, SW_SHOWDEFAULT,
+    SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOZORDER, SWP_SHOWWINDOW, SetWindowLongPtrW, SetWindowPos,
+    WINDOW_EX_STYLE, WINDOWPOS, WM_APP, WM_CLOSE, WM_HOTKEY, WM_WINDOWPOSCHANGING, WNDCLASSW,
+    WNDPROC, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 use windows::core::{HSTRING, PCWSTR, w};
 
@@ -104,6 +107,8 @@ unsafe extern "system" fn wnd_proc(
             job();
         }
         WM_SHOW => crate::statusbar::on_show_request(),
+        // `taskkill` without /f; the keep-alive window no longer quits on it
+        WM_CLOSE => crate::statusbar::on_quit_request(),
         _ if msg != 0 && msg == TASKBAR_CREATED.with(Cell::get) => {
             // Explorer restarted and lost every tray icon.
             crate::statusbar::on_taskbar_created();
@@ -173,8 +178,27 @@ impl Render for KeepAlive {
     }
 }
 
+/// A gpui window's HWND. gpui's own `window_handle()` is its window id; the trait gives
+/// the HWND.
+pub fn window_hwnd(window: &Window) -> Option<HWND> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let handle = HasWindowHandle::window_handle(window).ok()?;
+    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+        return None;
+    };
+    Some(HWND(handle.hwnd.get() as *mut _))
+}
+
+/// gpui's window procedure for the keep-alive window, which [`keep_alive_proc`] wraps.
+static KEEP_ALIVE_PROC: AtomicIsize = AtomicIsize::new(0);
+
 /// gpui on Windows quits when its last window closes, and the popover closes all the
 /// time. A window that is never shown keeps the app running in the tray.
+///
+/// gpui still shows a hidden window when its monitor goes away (`WM_DISPLAYCHANGE` after
+/// sleep, a monitor turning off, a game changing the mode), at the default size and with
+/// nothing drawn: a large transparent window that Alt+F4 closes, quitting Swapbar with
+/// it. So the window is made too small to see and its procedure wrapped to refuse both.
 pub fn keep_alive(cx: &mut App) {
     let bounds = Bounds {
         origin: point(px(0.0), px(0.0)),
@@ -194,7 +218,58 @@ pub fn keep_alive(cx: &mut App) {
         },
         |_, cx| cx.new(|_| KeepAlive),
     );
-    if let Err(e) = opened {
-        eprintln!("keep-alive window failed: {e}");
+    match opened {
+        Ok(handle) => {
+            let _ = handle.update(cx, |_, window, _| {
+                if let Some(hwnd) = window_hwnd(window) {
+                    keep_hidden(hwnd);
+                }
+            });
+        }
+        Err(e) => eprintln!("keep-alive window failed: {e}"),
+    }
+}
+
+fn keep_hidden(hwnd: HWND) {
+    unsafe {
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE.0 as isize);
+        // gpui sizes a window that starts hidden only when it is first activated
+        let _ = SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            1,
+            1,
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_HIDEWINDOW,
+        );
+        let gpui_proc =
+            SetWindowLongPtrW(hwnd, GWLP_WNDPROC, keep_alive_proc as *const () as isize);
+        KEEP_ALIVE_PROC.store(gpui_proc, Ordering::Relaxed);
+    }
+}
+
+unsafe extern "system" fn keep_alive_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match msg {
+        // closing the last gpui window quits the app; the tray menu's Quit doesn't close it
+        WM_CLOSE => return LRESULT(0),
+        WM_WINDOWPOSCHANGING => {
+            let pos = unsafe { &mut *(lparam.0 as *mut WINDOWPOS) };
+            pos.flags &= !SWP_SHOWWINDOW;
+            pos.flags |= SWP_NOACTIVATE;
+        }
+        _ => {}
+    }
+    let gpui_proc: WNDPROC =
+        unsafe { std::mem::transmute(KEEP_ALIVE_PROC.load(Ordering::Relaxed)) };
+    match gpui_proc {
+        Some(_) => unsafe { CallWindowProcW(gpui_proc, hwnd, msg, wparam, lparam) },
+        None => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }
 }

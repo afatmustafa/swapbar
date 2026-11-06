@@ -6,7 +6,7 @@
 use std::cell::RefCell;
 
 use gpui::{Bounds, Pixels, point, px, size};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows::Win32::Foundation::{LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     ANTIALIASED_QUALITY, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CLIP_DEFAULT_PRECIS, CreateBitmap,
     CreateCompatibleDC, CreateDIBSection, CreateFontW, DEFAULT_CHARSET, DIB_RGB_COLORS, DT_CENTER,
@@ -234,15 +234,9 @@ fn over_own_window(p: POINT) -> bool {
 /// Keep the popover above other windows and give it focus when Windows allows, like the
 /// system's own tray flyouts.
 pub fn raise_popover(window: &gpui::Window) {
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    // gpui's own `window_handle()` is its window id; the trait gives the HWND
-    let Ok(handle) = HasWindowHandle::window_handle(window) else {
+    let Some(hwnd) = crate::win::window_hwnd(window) else {
         return;
     };
-    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
-        return;
-    };
-    let hwnd = HWND(handle.hwnd.get() as *mut _);
     unsafe {
         let _ = SetWindowPos(
             hwnd,
@@ -307,6 +301,10 @@ pub(super) fn on_tray_message(_wparam: WPARAM, lparam: LPARAM) {
 
 pub(super) fn on_show_request() {
     menu_action(MenuAction::Open);
+}
+
+pub(super) fn on_quit_request() {
+    menu_action(MenuAction::Quit);
 }
 
 pub(super) fn on_taskbar_created() {
