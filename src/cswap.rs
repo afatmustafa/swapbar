@@ -493,6 +493,61 @@ pub fn upgrade() -> Result<(), String> {
     run(&["upgrade"]).map(|_| ())
 }
 
+/// The account `cswap auto` switched to.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AutoSwitched {
+    pub number: u32,
+    pub email: String,
+}
+
+/// One `cswap auto` round: cswap reads usage and, by its own `autoswitch.*` settings,
+/// switches away from an account near its limit. Cooldown and the rest of its state
+/// live in cswap's files between rounds.
+pub fn auto_tick() -> Result<Option<AutoSwitched>, String> {
+    const LABEL: &str = "cswap auto --once";
+    let bin = setup::find(Tool::Cswap).ok_or(l("cswap isn't installed", "cswap kurulu değil"))?;
+    let out = setup::command(&bin)
+        .args(["auto", "--once", "--json"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("{LABEL}: {e}"))?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // 0 switched, 2 nothing to do, 3 no account to go to; 1 is an error
+    match out.status.code() {
+        Some(0 | 2 | 3) => Ok(parse_auto_tick(&stdout)),
+        code => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let msg = auto_error(&stdout).unwrap_or_else(|| strip_ansi(stderr.trim()));
+            Err(format!("{LABEL} ({code:?}): {msg}"))
+        }
+    }
+}
+
+/// `cswap auto --json` prints one event per line; a `switch` that wasn't a dry run.
+fn parse_auto_tick(out: &str) -> Option<AutoSwitched> {
+    let event = auto_events(out).find(|e| e["event"] == "switch" && e["dryRun"] != true)?;
+    let to = &event["to"];
+    let number = match &to["number"] {
+        serde_json::Value::String(s) => s.parse().ok()?,
+        n => u32::try_from(n.as_u64()?).ok()?,
+    };
+    Some(AutoSwitched {
+        number,
+        email: to["email"].as_str().unwrap_or_default().to_string(),
+    })
+}
+
+fn auto_error(out: &str) -> Option<String> {
+    auto_events(out)
+        .find(|e| e["event"] == "error")
+        .and_then(|e| e["message"].as_str().map(str::to_string))
+}
+
+fn auto_events(out: &str) -> impl Iterator<Item = serde_json::Value> + '_ {
+    out.lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+}
+
 /// Exchange two accounts' slot numbers.
 pub fn swap_slots(a: u32, b: u32) -> Result<(), String> {
     run(&["swap", &a.to_string(), &b.to_string()]).map(|_| ())
@@ -643,6 +698,50 @@ mod tests {
         assert!(u.five_hour.is_none() && u.spend.is_none());
         assert_eq!(u.scoped.len(), 1);
         assert_eq!(u.scoped[0].name.as_deref(), Some("Fable"));
+    }
+
+    #[test]
+    fn auto_tick_reports_the_switch() {
+        let out = concat!(
+            r#"{"schemaVersion": 1, "event": "poll", "ts": "2026-11-06T20:13:47Z", "active": {"number": 4, "email": "a@x.com"}, "headroomPct": {"3": 96.0, "4": 0.5}, "threshold": 99.0}"#,
+            "\n",
+            r#"{"schemaVersion": 1, "event": "switch", "ts": "2026-11-06T20:13:48Z", "trigger": "proactive", "from": {"number": 4, "email": "a@x.com"}, "to": {"number": 3, "email": "b@x.com"}, "warnings": [], "dryRun": false}"#,
+            "\n",
+        );
+        assert_eq!(
+            parse_auto_tick(out),
+            Some(AutoSwitched {
+                number: 3,
+                email: "b@x.com".into()
+            })
+        );
+    }
+
+    #[test]
+    fn auto_tick_without_a_switch() {
+        let out = concat!(
+            r#"{"schemaVersion": 1, "event": "poll", "active": {"number": 4, "email": "a@x.com"}}"#,
+            "\n",
+            r#"{"schemaVersion": 1, "event": "no-switch", "reason": "below-threshold", "detail": "7d 58% < 99%"}"#,
+            "\n",
+        );
+        assert_eq!(parse_auto_tick(out), None);
+        // a dry run only says what it would do
+        let dry = r#"{"event": "switch", "to": {"number": 3, "email": "b@x.com"}, "dryRun": true}"#;
+        assert_eq!(parse_auto_tick(dry), None);
+        assert_eq!(parse_auto_tick("not json\n"), None);
+    }
+
+    #[test]
+    fn auto_tick_accepts_a_quoted_slot_number() {
+        let out = r#"{"event": "switch", "trigger": "failover", "from": null, "to": {"number": "2", "email": "c@x.com"}}"#;
+        assert_eq!(
+            parse_auto_tick(out),
+            Some(AutoSwitched {
+                number: 2,
+                email: "c@x.com".into()
+            })
+        );
     }
 
     #[test]
