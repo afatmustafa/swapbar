@@ -5216,10 +5216,15 @@ dependencies = [
  "block",
  "chrono",
  "cocoa 0.26.0",
+ "embed-resource",
  "gpui",
  "objc",
+ "raw-window-handle",
+ "resvg",
  "serde",
  "serde_json",
+ "windows 0.61.3",
+ "windows-registry 0.5.3",
 ]
 
 [[package]]

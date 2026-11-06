@@ -7,12 +7,19 @@ use gpui::{
 
 use crate::assets::icon;
 use crate::cswap::ConfigList;
-use crate::i18n::l;
+use crate::i18n::{l, os};
 use crate::lf;
 use crate::settings::{Language, PercentMode, Prefs, Theme, TitleMode};
 use crate::{APP_NAME, APP_VERSION, AppState, Globals, hotkey, notify};
 
+#[cfg(target_os = "macos")]
 pub(crate) const UI_FONT: &str = ".AppleSystemUIFont";
+#[cfg(target_os = "macos")]
+pub(crate) const MONO_FONT: &str = "Menlo";
+#[cfg(target_os = "windows")]
+pub(crate) const UI_FONT: &str = "Segoe UI";
+#[cfg(target_os = "windows")]
+pub(crate) const MONO_FONT: &str = "Consolas";
 
 pub(crate) fn c(hex: u32) -> Hsla {
     rgb(hex).into()
@@ -100,7 +107,10 @@ impl Page {
     fn label(self) -> &'static str {
         match self {
             Page::General => l("General", "Genel"),
-            Page::MenuBar => l("Menu Bar", "Menü Çubuğu"),
+            Page::MenuBar => os(
+                l("Menu Bar", "Menü Çubuğu"),
+                l("System Tray", "Sistem Tepsisi"),
+            ),
             Page::Notifications => l("Notifications", "Bildirimler"),
             Page::Accounts => l("Accounts", "Hesaplar"),
             Page::AutoSwitch => l("Auto-switch", "Otomatik geçiş"),
@@ -257,7 +267,7 @@ fn stepper(
                 .px_2()
                 .flex()
                 .justify_center()
-                .font_family("Menlo")
+                .font_family(MONO_FONT)
                 .text_size(px(11.5))
                 .text_color(c(t().text))
                 .child(value),
@@ -479,19 +489,28 @@ fn page_general(s: &AppState) -> impl IntoElement {
         .child(group(vec![
             row(
                 l("Theme", "Tema"),
-                Some(l("System follows the macOS light/dark setting.", "Sistem, macOS'un açık/koyu ayarını izler.")),
+                Some(os(
+                    l("System follows the macOS light/dark setting.", "Sistem, macOS'un açık/koyu ayarını izler."),
+                    l("System follows the Windows light/dark setting.", "Sistem, Windows'un açık/koyu ayarını izler."),
+                )),
                 segmented("theme", &Theme::ALL, p.theme, Theme::label, |t, cx| crate::update_prefs(cx, |p| p.theme = t)),
             ),
             row(
                 l("Language", "Dil"),
-                Some(l("System follows the macOS language: Turkish if it's first, otherwise English.", "Sistem, macOS dilini izler: ilk dil Türkçeyse Türkçe, değilse İngilizce.")),
+                Some(os(
+                    l("System follows the macOS language: Turkish if it's first, otherwise English.", "Sistem, macOS dilini izler: ilk dil Türkçeyse Türkçe, değilse İngilizce."),
+                    l("System follows the Windows display language: Turkish if it's Turkish, otherwise English.", "Sistem, Windows görüntüleme dilini izler: Türkçeyse Türkçe, değilse İngilizce."),
+                )),
                 segmented("language", &Language::ALL, p.language, Language::label, |lang, cx| crate::update_prefs(cx, |p| p.language = lang)),
             ),
         ]))
         .child(heading(l("Startup", "Başlangıç")))
         .child(group(vec![row(
             l("Launch at login", "Girişte başlat"),
-            Some(l("Installs a LaunchAgent that starts the app when you sign in.", "Mac'e giriş yaptığında uygulamayı başlatan bir LaunchAgent kurar.")),
+            Some(os(
+                l("Installs a LaunchAgent that starts the app when you sign in.", "Mac'e giriş yaptığında uygulamayı başlatan bir LaunchAgent kurar."),
+                l("Starts Swapbar when you sign in to Windows, from the Run key in the registry.", "Windows'a giriş yaptığında Swapbar'ı kayıt defterindeki Run anahtarıyla başlatır."),
+            )),
             toggle("launch", launch, |on, cx| {
                 if let Err(e) = crate::settings::set_launch_at_login(on) {
                     eprintln!("launch agent: {e}");
@@ -648,7 +667,10 @@ fn page_notifications(s: &AppState) -> impl IntoElement {
             ),
             row(
                 l("When the current account runs low", "Aktif hesabın kotası azalınca"),
-                Some(l("Once per 5h or 7d window, with a Switch button for the best other account.", "5h veya 7d penceresi başına bir kez, en uygun diğer hesap için Geç butonuyla.")),
+                Some(os(
+                    l("Once per 5h or 7d window, with a Switch button for the best other account.", "5h veya 7d penceresi başına bir kez, en uygun diğer hesap için Geç butonuyla."),
+                    l("Once per 5h or 7d window. Click it to see the best other account.", "5h veya 7d penceresi başına bir kez. Tıklayınca en uygun diğer hesabı gösterir."),
+                )),
                 toggle("notify-low", p.notify_low, |on, cx| {
                     crate::update_prefs(cx, |p| p.notify_low = on);
                     if on {
@@ -691,7 +713,10 @@ fn page_notifications(s: &AppState) -> impl IntoElement {
         .child(group(vec![
             row(
                 l("Send a test notification", "Deneme bildirimi gönder"),
-                Some(l("If nothing appears, allow Swapbar in System Settings › Notifications.", "Bir şey görünmezse Sistem Ayarları › Bildirimler'de Swapbar'a izin ver.")),
+                Some(os(
+                    l("If nothing appears, allow Swapbar in System Settings › Notifications.", "Bir şey görünmezse Sistem Ayarları › Bildirimler'de Swapbar'a izin ver."),
+                    l("If nothing appears, check Settings › System › Notifications and Do not disturb.", "Bir şey görünmezse Ayarlar › Sistem › Bildirimler'i ve Rahatsız etme'yi kontrol et."),
+                )),
                 div()
                     .flex()
                     .gap_2()
@@ -699,7 +724,12 @@ fn page_notifications(s: &AppState) -> impl IntoElement {
                         notify::request_authorization();
                         notify::post("test", l("Swapbar notifications are on", "Swapbar bildirimleri açık"), l("You'll hear from Swapbar when quota runs low or resets.", "Kota azalınca ya da sıfırlanınca Swapbar haber verecek."), None);
                     }))
-                    .child(button("open-notify-settings", l("Open System Settings", "Sistem Ayarları'nı aç"), false, |_| notify::open_system_settings())),
+                    .child(button(
+                        "open-notify-settings",
+                        os(l("Open System Settings", "Sistem Ayarları'nı aç"), l("Open notification settings", "Bildirim ayarlarını aç")),
+                        false,
+                        |_| notify::open_system_settings(),
+                    )),
             ),
         ]))
 }
@@ -709,18 +739,17 @@ fn page_menubar(s: &AppState) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
-        .child(heading(l("Menu bar", "Menü çubuğu")))
+        .child(heading(os(l("Menu bar", "Menü çubuğu"), l("Tray icon", "Tepsi ikonu"))))
         .child(group(vec![
             row(
                 l("Percentage", "Yüzde"),
-                Some(l("Show how much quota is left, or how much has been used. Applies to the menu bar and the account list.", "Ne kadar kota kaldığını ya da ne kadar kullanıldığını göster. Menü çubuğu ve hesap listesi için geçerli.")),
+                Some(os(
+                    l("Show how much quota is left, or how much has been used. Applies to the menu bar and the account list.", "Ne kadar kota kaldığını ya da ne kadar kullanıldığını göster. Menü çubuğu ve hesap listesi için geçerli."),
+                    l("Show how much quota is left, or how much has been used. Applies to the tray icon and the account list.", "Ne kadar kota kaldığını ya da ne kadar kullanıldığını göster. Tepsi ikonu ve hesap listesi için geçerli."),
+                )),
                 segmented("pct-mode", &PercentMode::ALL, p.percent_mode, PercentMode::label, |m, cx| crate::update_prefs(cx, |p| p.percent_mode = m)),
             ),
-            row(
-                l("Title next to the icon", "İkonun yanındaki başlık"),
-                Some(l("Which windows of the current account to show in the menu bar.", "Aktif hesabın hangi pencerelerinin menü çubuğunda gösterileceği.")),
-                segmented("title-mode", &TitleMode::ALL, p.title_mode, TitleMode::label, |m, cx| crate::update_prefs(cx, |p| p.title_mode = m)),
-            ),
+            title_mode_row(p),
         ]))
         .child(heading(l("Account rows", "Hesap satırları")))
         .child(group(vec![
@@ -729,6 +758,47 @@ fn page_menubar(s: &AppState) -> impl IntoElement {
             row(l("Show reset times", "Sıfırlanma zamanlarını göster"), None, toggle("show-reset", p.show_reset_times, |on, cx| crate::update_prefs(cx, |p| p.show_reset_times = on))),
             row(l("Show pace", "Tempoyu göster"), Some(l("Mark windows used faster than an even pace, and say when they would run out.", "Eşit tempodan hızlı harcanan pencereleri işaretle ve ne zaman biteceklerini söyle.")), toggle("show-pace", p.show_pace, |on, cx| crate::update_prefs(cx, |p| p.show_pace = on))),
         ]))
+}
+
+/// What shows beside the menu bar icon. A tray icon only has room for one number, so on
+/// Windows the 5h figure replaces the logo and the tooltip carries both windows.
+fn title_mode_row(p: &Prefs) -> gpui::AnyElement {
+    let set = |m: TitleMode, cx: &mut App| crate::update_prefs(cx, |p| p.title_mode = m);
+    if cfg!(target_os = "windows") {
+        let current = match p.title_mode {
+            TitleMode::Both => TitleMode::FiveHour,
+            m => m,
+        };
+        row(
+            l("Number in the icon", "İkondaki sayı"),
+            Some(l(
+                "The current account's 5h quota in place of the logo. Hover the icon for both windows.",
+                "Logonun yerine aktif hesabın 5h kotası. İki pencere için ikonun üzerine gel.",
+            )),
+            segmented(
+                "title-mode",
+                &[TitleMode::Off, TitleMode::FiveHour],
+                current,
+                TitleMode::label,
+                set,
+            ),
+        )
+    } else {
+        row(
+            l("Title next to the icon", "İkonun yanındaki başlık"),
+            Some(l(
+                "Which windows of the current account to show in the menu bar.",
+                "Aktif hesabın hangi pencerelerinin menü çubuğunda gösterileceği.",
+            )),
+            segmented(
+                "title-mode",
+                &TitleMode::ALL,
+                p.title_mode,
+                TitleMode::label,
+                set,
+            ),
+        )
+    }
 }
 
 /// A small text button under an account row.

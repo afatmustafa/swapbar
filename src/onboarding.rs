@@ -14,10 +14,10 @@ use gpui::{
 use crate::assets::icon;
 use crate::cswap;
 use crate::dialog::{self, Alert};
-use crate::i18n::l;
+use crate::i18n::{l, os};
 use crate::lf;
 use crate::settings_ui::{
-    UI_FONT, button, c, group, heading, primary_button, row, shortcut, t, toggle,
+    MONO_FONT, UI_FONT, button, c, group, heading, primary_button, row, shortcut, t, toggle,
 };
 use crate::setup::{self, AuthStatus, Login, Tools};
 use crate::{APP_NAME, AppState, Globals, hotkey, notify};
@@ -499,7 +499,7 @@ pub fn open(cx: &mut App, entry: Entry) {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(gpui::TitlebarOptions {
                 title: Some(lf!("{APP_NAME} Setup", "{APP_NAME} Kurulumu").into()),
-                appears_transparent: true,
+                appears_transparent: crate::TRANSPARENT_TITLEBAR,
                 traffic_light_position: Some(point(px(12.0), px(12.0))),
             }),
             focus: true,
@@ -540,7 +540,7 @@ fn lead(text: impl Into<SharedString>) -> impl IntoElement {
 
 fn mono(text: impl Into<SharedString>) -> impl IntoElement {
     div()
-        .font_family("Menlo")
+        .font_family(MONO_FONT)
         .text_size(px(11.0))
         .text_color(c(t().text))
         .child(text.into())
@@ -567,7 +567,7 @@ fn message(text: &str, color: u32) -> impl IntoElement {
 }
 
 fn home_relative(p: &std::path::Path) -> String {
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = setup::home().display().to_string();
     let s = p.display().to_string();
     match s.strip_prefix(&home) {
         Some(rest) if !home.is_empty() => format!("~{rest}"),
@@ -755,7 +755,7 @@ impl SetupRoot {
             for l in lines {
                 log = log.child(
                     div()
-                        .font_family("Menlo")
+                        .font_family(MONO_FONT)
                         .text_size(px(10.0))
                         .text_color(c(t().secondary))
                         .whitespace_nowrap()
@@ -970,14 +970,23 @@ impl SetupRoot {
             .flex()
             .flex_col()
             .child(title(l("You're all set", "Her şey hazır")))
-            .child(lead(lf!("Swapbar lives in your menu bar. Click it, or press {} from any app. A few things you may want on:", "Swapbar menü çubuğunda duruyor. Tıkla ya da herhangi bir uygulamadan {} tuşlarına bas. Açmak isteyebileceğin birkaç şey:",
-                hotkey::TOGGLE_LABEL
-            )))
+            .child(lead(if cfg!(target_os = "windows") {
+                lf!("Swapbar lives in the system tray, next to the clock. If you don't see it, click ^ there and drag it onto the taskbar. Click it, or press {} from any app. A few things you may want on:", "Swapbar, saatin yanındaki sistem tepsisinde duruyor. Görmüyorsan oradaki ^ simgesine tıklayıp onu görev çubuğuna sürükle. Tıkla ya da herhangi bir uygulamadan {} tuşlarına bas. Açmak isteyebileceğin birkaç şey:",
+                    hotkey::TOGGLE_LABEL
+                )
+            } else {
+                lf!("Swapbar lives in your menu bar. Click it, or press {} from any app. A few things you may want on:", "Swapbar menü çubuğunda duruyor. Tıkla ya da herhangi bir uygulamadan {} tuşlarına bas. Açmak isteyebileceğin birkaç şey:",
+                    hotkey::TOGGLE_LABEL
+                )
+            }))
             .child(heading(l("Preferences", "Tercihler")))
             .child(group(vec![
                 row(
                     l("Launch at login", "Girişte başlat"),
-                    Some(l("Start Swapbar when you sign in to your Mac.", "Mac'e giriş yaptığında Swapbar'ı başlat.")),
+                    Some(os(
+                        l("Start Swapbar when you sign in to your Mac.", "Mac'e giriş yaptığında Swapbar'ı başlat."),
+                        l("Start Swapbar when you sign in to Windows.", "Windows'a giriş yaptığında Swapbar'ı başlat."),
+                    )),
                     toggle("setup-launch", launch, |on, cx| {
                         if let Err(e) = crate::settings::set_launch_at_login(on) {
                             eprintln!("launch agent: {e}");

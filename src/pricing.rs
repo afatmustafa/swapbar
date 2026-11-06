@@ -170,7 +170,7 @@ fn write_overlay(path: &std::path::Path, overlay: &HashMap<String, Rate>) {
 }
 
 fn fetch_models_dev() -> Option<HashMap<String, Rate>> {
-    let out = std::process::Command::new("/usr/bin/curl")
+    let out = crate::setup::curl()
         .args(["-sS", "--max-time", "10", "https://models.dev/api.json"])
         .output()
         .ok()?;

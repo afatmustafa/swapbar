@@ -1,8 +1,10 @@
 //! Interface language: English or Turkish. `Language::System` follows the first macOS
-//! preferred language. Strings sit next to their use as English/Turkish pairs: `l()` for
-//! plain text, `lf!` for formatted text.
+//! preferred language (the display language on Windows). Strings sit next to their use as
+//! English/Turkish pairs: `l()` for plain text, `lf!` for formatted text.
 
+#[cfg(target_os = "macos")]
 use cocoa::base::{id, nil};
+#[cfg(target_os = "macos")]
 use objc::{class, msg_send, sel, sel_impl};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -30,6 +32,16 @@ pub fn l(en: &'static str, tr: &'static str) -> &'static str {
 
 fn pick<T>(turkish: bool, en: T, tr: T) -> T {
     if turkish { tr } else { en }
+}
+
+/// The macOS or the Windows wording, for text that names the platform:
+/// `os(l("menu bar", "menü çubuğu"), l("tray", "tepsi"))`.
+pub fn os<T>(mac: T, windows: T) -> T {
+    if cfg!(target_os = "windows") {
+        windows
+    } else {
+        mac
+    }
 }
 
 /// `format!` with an English and a Turkish template sharing the same arguments.
@@ -100,6 +112,14 @@ fn time_tr(s: &str) -> String {
     out.join(" ")
 }
 
+#[cfg(target_os = "windows")]
+fn system_is_turkish() -> bool {
+    const LANG_TURKISH: u16 = 0x1f;
+    let lang = unsafe { windows::Win32::Globalization::GetUserDefaultUILanguage() };
+    lang & 0x3ff == LANG_TURKISH
+}
+
+#[cfg(target_os = "macos")]
 fn system_is_turkish() -> bool {
     unsafe {
         let langs: id = msg_send![class!(NSLocale), preferredLanguages];

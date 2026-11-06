@@ -1,0 +1,35 @@
+// Windows resources for swapbar.exe, compiled by build.rs. Paths are relative to the
+// crate root; SWAPBAR_VERSION and SWAPBAR_VERSION_PARTS come from Cargo.toml.
+#pragma code_page(65001)
+
+// gpui links its own manifest (per-monitor DPI awareness, Common Controls 6), so there
+// is none here: a second one would collide with it.
+
+// ID 1 is the icon gpui loads for its windows, and the one Explorer shows.
+1 ICON "assets/AppIcon.ico"
+
+1 VERSIONINFO
+FILEVERSION SWAPBAR_VERSION_PARTS
+PRODUCTVERSION SWAPBAR_VERSION_PARTS
+FILEOS 0x40004
+FILETYPE 0x1
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      // Windows names the app in notifications and Task Manager after FileDescription.
+      VALUE "FileDescription", "Swapbar"
+      VALUE "ProductName", "Swapbar"
+      VALUE "CompanyName", "Mustafa Afat"
+      VALUE "LegalCopyright", "© 2026 Mustafa Afat. MIT License."
+      VALUE "OriginalFilename", "swapbar.exe"
+      VALUE "FileVersion", SWAPBAR_VERSION
+      VALUE "ProductVersion", SWAPBAR_VERSION
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END
