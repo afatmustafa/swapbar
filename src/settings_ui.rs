@@ -1039,12 +1039,23 @@ fn page_autoswitch(s: &AppState) -> impl IntoElement {
         );
     }
     col = col
+        .child(heading(l("Swapbar", "Swapbar")))
+        .child(group(vec![row(
+            l("Switch automatically", "Otomatik geç"),
+            Some(l("With every account refresh, Swapbar lets cswap switch away from an account that reaches the threshold below (`cswap auto --once`).", "Swapbar her hesap yenilemesinde, aşağıdaki eşiğe gelen hesaptan cswap'ın geçmesine izin verir (`cswap auto --once`).")),
+            toggle("auto-switch", s.prefs.auto_switch, |on, cx| {
+                crate::update_prefs(cx, |p| p.auto_switch = on);
+                if on {
+                    crate::reload_accounts(cx, true);
+                }
+            }),
+        )]))
         .child(heading(l("Thresholds", "Eşikler")))
-        .child(div().text_size(px(11.0)).text_color(c(t().secondary)).mb_2().child(l("These are cswap's own settings (`cswap config`). They drive `cswap auto`; run `cswap auto` or `cswap menubar --install-service` to have switching happen automatically.", "Bunlar cswap'ın kendi ayarları (`cswap config`) ve `cswap auto`'yu yönetir. Geçişlerin otomatik olması için `cswap auto` ya da `cswap menubar --install-service` çalıştır.")))
+        .child(div().text_size(px(11.0)).text_color(c(t().secondary)).mb_2().child(l("These are cswap's own settings (`cswap config`). They drive Swapbar's automatic switching and `cswap auto`.", "Bunlar cswap'ın kendi ayarları (`cswap config`); Swapbar'ın otomatik geçişini ve `cswap auto`'yu yönetir.")))
         .child(group(vec![
             row(l("Switch at", "Geçiş eşiği"), Some(l("Switch when the binding 5h/7d window reaches this much used.", "Belirleyici 5h/7d penceresi bu kadar kullanılınca geç.")), num_setting("threshold", "autoswitch.threshold", list, 90.0, 5.0, 50.0, 99.0, "%")),
             row(l("Hysteresis", "Histerezis"), Some(l("A target must beat the active account by this many points.", "Hedef hesap aktif hesabı bu kadar puan geçmeli.")), num_setting("hyst", "autoswitch.hysteresisPct", list, 10.0, 1.0, 0.0, 50.0, "%")),
-            row(l("Poll interval", "Sorgu aralığı"), Some(l("For the `cswap auto` loop.", "`cswap auto` döngüsü için.")), num_setting("interval", "autoswitch.intervalSeconds", list, 60.0, 15.0, 15.0, 900.0, "s")),
+            row(l("Poll interval", "Sorgu aralığı"), Some(l("For a separate `cswap auto` loop. Swapbar checks at its account refresh interval (General).", "Ayrı çalışan `cswap auto` döngüsü için. Swapbar, hesap yenileme aralığında kontrol eder (Genel).")), num_setting("interval", "autoswitch.intervalSeconds", list, 60.0, 15.0, 15.0, 900.0, "s")),
             row(l("Cooldown", "Bekleme süresi"), Some(l("Minimum time between proactive switches.", "Kendiliğinden yapılan iki geçiş arasındaki en kısa süre.")), num_setting("cooldown", "autoswitch.cooldownSeconds", list, 300.0, 60.0, 0.0, 3600.0, "s")),
             row(l("Unhealthy after", "Sağlıksız sayma"), Some(l("Consecutive failed polls before an account is skipped.", "Bir hesap atlanmadan önceki art arda başarısız sorgu sayısı.")), num_setting("unhealthy", "autoswitch.unhealthyTicks", list, 3.0, 1.0, 1.0, 20.0, l(" polls", " sorgu"))),
         ]))

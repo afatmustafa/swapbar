@@ -120,6 +120,9 @@ pub struct Prefs {
     pub notify_login: bool,
     pub check_updates: bool,
     pub hotkeys: bool,
+    /// Run a `cswap auto` round with every account refresh, switching by cswap's
+    /// `autoswitch.*` settings.
+    pub auto_switch: bool,
 }
 
 impl Default for Prefs {
@@ -145,6 +148,7 @@ impl Default for Prefs {
             notify_login: true,
             check_updates: true,
             hotkeys: true,
+            auto_switch: false,
         }
     }
 }

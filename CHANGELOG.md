@@ -3,6 +3,12 @@
 All notable changes to Swapbar. The website shows the same notes at
 [swapbar.afat.me/changelog](https://swapbar.afat.me/changelog).
 
+## Unreleased
+
+### Added
+
+- **Automatic switching.** Turn on Settings › Auto-switch › **Switch automatically** and Swapbar runs a `cswap auto` round with every account refresh: when the active account reaches the threshold on that page, cswap switches to another one, by the strategy set there, and a notification says which. Before, switching only happened while `cswap auto` or cswap's macOS menu bar service ran. Off by default.
+
 ## 0.4.1
 
 ### Fixed

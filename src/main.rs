@@ -246,7 +246,7 @@ fn main() {
             }));
             hotkey::set_enabled(prefs.hotkeys);
 
-            refresh_accounts(cx);
+            reload_accounts(cx, true);
             refresh_usage(cx);
 
             if std::env::var("SWAPBAR_SETTINGS").is_ok() {
@@ -286,7 +286,7 @@ fn main() {
                     cx.background_executor()
                         .timer(Duration::from_secs(secs.max(15)))
                         .await;
-                    let _ = cx.update(refresh_accounts);
+                    let _ = cx.update(|cx| reload_accounts(cx, true));
                 }
             })
             .detach();
@@ -326,20 +326,39 @@ fn main() {
 }
 
 pub fn refresh_accounts(cx: &mut App) {
+    reload_accounts(cx, false);
+}
+
+/// Reload the account list. With `auto_switch` (the periodic refresh) and the preference
+/// on, cswap first gets a round to switch away from an account near its limit; running
+/// it here keeps it from contending with `cswap list` for cswap's lock.
+pub fn reload_accounts(cx: &mut App, auto_switch: bool) {
     let state = cx.global::<Globals>().state.clone();
-    let already = state.read(cx).accounts_loading;
-    if already {
+    let s = state.read(cx);
+    if s.accounts_loading {
         return;
     }
+    let auto_switch = auto_switch && s.prefs.auto_switch && s.switching.is_none();
     state.update(cx, |s, cx| {
         s.accounts_loading = true;
         cx.notify();
     });
     cx.spawn(async move |cx: &mut AsyncApp| {
-        let result = cx
+        let (switched, result) = cx
             .background_executor()
-            .spawn(async { cswap::list() })
+            .spawn(async move {
+                let switched = if auto_switch {
+                    cswap::auto_tick()
+                } else {
+                    Ok(None)
+                };
+                (switched, cswap::list())
+            })
             .await;
+        let switched = switched.unwrap_or_else(|e| {
+            debug_log(format_args!("auto-switch failed: {e}"));
+            None
+        });
         let _ = state.update(cx, |s, cx| {
             s.accounts_loading = false;
             match result {
@@ -353,6 +372,10 @@ pub fn refresh_accounts(cx: &mut App) {
         });
         let _ = cx.update(|cx| {
             update_title(cx);
+            if let Some(to) = switched {
+                debug_log(format_args!("auto-switched to {}", to.number));
+                notify_switched(cx, to.number, true);
+            }
             notify_quota_changes(cx);
             offer_setup_once(cx);
         });
@@ -735,29 +758,40 @@ pub fn switch_account(cx: &mut App, number: u32) {
         let _ = cx.update(|cx| {
             // a switch from a shortcut or a notification has no popover to show it
             if ok && cx.global::<Globals>().window.is_none() {
-                let target = state
-                    .read(cx)
-                    .accounts
-                    .as_ref()
-                    .and_then(|l| l.accounts.iter().find(|a| a.number == number))
-                    .map(|a| (a.email.clone(), advice::headroom(a)));
-                if let Some((email, left)) = target {
-                    let body = match left {
-                        Some(h) => lf!("{h:.0}% quota left.", "%{h:.0} kota kaldı."),
-                        None => l("Quota not known yet.", "Kota henüz bilinmiyor.").to_string(),
-                    };
-                    notify::post(
-                        "switched",
-                        &lf!("Switched to {email}", "{email} hesabına geçildi"),
-                        &body,
-                        None,
-                    );
-                }
+                notify_switched(cx, number, false);
             }
             refresh_accounts(cx);
         });
     })
     .detach();
+}
+
+/// Tell which account Claude Code uses now; `auto` when cswap chose it by itself.
+fn notify_switched(cx: &App, number: u32, auto: bool) {
+    let target = cx
+        .global::<Globals>()
+        .state
+        .read(cx)
+        .accounts
+        .as_ref()
+        .and_then(|l| l.accounts.iter().find(|a| a.number == number))
+        .map(|a| (a.email.clone(), advice::headroom(a)));
+    let Some((email, left)) = target else {
+        return;
+    };
+    let body = match left {
+        Some(h) => lf!("{h:.0}% quota left.", "%{h:.0} kota kaldı."),
+        None => l("Quota not known yet.", "Kota henüz bilinmiyor.").to_string(),
+    };
+    let title = if auto {
+        lf!(
+            "Switched automatically to {email}",
+            "Otomatik olarak {email} hesabına geçildi"
+        )
+    } else {
+        lf!("Switched to {email}", "{email} hesabına geçildi")
+    };
+    notify::post("switched", &title, &body, None);
 }
 
 pub fn refresh_usage(cx: &mut App) {
