@@ -436,6 +436,107 @@ pub fn rename_account(cx: &mut App, number: u32) {
     });
 }
 
+/// Give an account its own auto-switch point, or with `None` return it to the global one.
+/// The row shows the new value at once; the reload after the command confirms it.
+pub fn set_account_threshold(cx: &mut App, number: u32, pct: Option<f64>) {
+    let state = cx.global::<Globals>().state.clone();
+    state.update(cx, |s, cx| {
+        if let Some(acc) = s
+            .accounts
+            .as_mut()
+            .and_then(|list| list.accounts.iter_mut().find(|a| a.number == number))
+        {
+            acc.threshold = pct;
+        }
+        cx.notify();
+    });
+    account_command(cx, move || cswap::set_threshold(number, pct));
+}
+
+/// Ask for an account's own auto-switch point. Empty returns it to `global`.
+pub fn edit_account_threshold(cx: &mut App, number: u32, global: f64) {
+    let Some(acc) = account(cx, number) else {
+        return;
+    };
+    let (lo, hi, g) = (
+        cswap::num(cswap::THRESHOLD_MIN),
+        cswap::num(cswap::THRESHOLD_MAX),
+        cswap::num(global),
+    );
+    let alert = dialog::Alert::confirm(
+        lf!("Switch point for {}", "{} için geçiş eşiği", acc.name()),
+        lf!(
+            "Auto-switch leaves this account when its 5h/7d window reaches this much used, from {lo} to {hi}%. Leave empty to use the default ({g}%).",
+            "Otomatik geçiş, 5h/7d penceresi bu kadar kullanılınca bu hesaptan ayrılır; {lo} ile {hi}% arası. Varsayılanı ({g}%) kullanmak için boş bırak."
+        ),
+        l("Save", "Kaydet"),
+    )
+    .with_input(acc.threshold.map(cswap::num).unwrap_or_default(), g);
+    dialog::ask(cx, alert, move |answer, cx| {
+        let Some(text) = answer else { return };
+        if text.trim().is_empty() {
+            return set_account_threshold(cx, number, None);
+        }
+        match settings_ui::parse_number(&text)
+            .filter(|v| (cswap::THRESHOLD_MIN..=cswap::THRESHOLD_MAX).contains(v))
+        {
+            Some(v) => set_account_threshold(cx, number, Some(v)),
+            None => {
+                let msg = out_of_range(&text, &lo, &hi);
+                let state = cx.global::<Globals>().state.clone();
+                state.update(cx, |s, cx| {
+                    s.accounts_error = Some(msg);
+                    cx.notify();
+                });
+            }
+        }
+    });
+}
+
+/// Ask for a number setting of cswap's. A value outside `min..=max` shows in the error
+/// line instead of reaching cswap.
+pub fn edit_cswap_number(
+    cx: &mut App,
+    key: &'static str,
+    title: &'static str,
+    current: f64,
+    min: f64,
+    max: f64,
+    unit: &'static str,
+) {
+    let (lo, hi) = (cswap::num(min), cswap::num(max));
+    let alert = dialog::Alert::confirm(
+        title,
+        lf!("From {lo} to {hi}{unit}.", "{lo} ile {hi}{unit} arası."),
+        l("Save", "Kaydet"),
+    )
+    .with_input(cswap::num(current), "");
+    dialog::ask(cx, alert, move |answer, cx| {
+        let Some(text) = answer.filter(|t| !t.trim().is_empty()) else {
+            return;
+        };
+        match settings_ui::parse_number(&text).filter(|v| (min..=max).contains(v)) {
+            Some(v) => set_cswap_config(cx, key.to_string(), Some(cswap::num(v))),
+            None => {
+                let msg = out_of_range(&text, &lo, &hi);
+                let state = cx.global::<Globals>().state.clone();
+                state.update(cx, |s, cx| {
+                    s.config_error = Some(msg);
+                    cx.notify();
+                });
+            }
+        }
+    });
+}
+
+fn out_of_range(text: &str, lo: &str, hi: &str) -> String {
+    let text = text.trim();
+    lf!(
+        "“{text}” isn't a value from {lo} to {hi}.",
+        "“{text}”, {lo} ile {hi} arasında bir değer değil."
+    )
+}
+
 /// Swap an account with its neighbour in slot order (`up` = towards slot 1).
 pub fn move_account(cx: &mut App, number: u32, up: bool) {
     let state = cx.global::<Globals>().state.read(cx);

@@ -6,7 +6,7 @@ use gpui::{
 };
 
 use crate::assets::icon;
-use crate::cswap::ConfigList;
+use crate::cswap::{self, ConfigList};
 use crate::i18n::l;
 use crate::lf;
 use crate::settings::{Language, PercentMode, Prefs, Theme, TitleMode};
@@ -226,6 +226,27 @@ fn stepper(
     value: String,
     on_step: impl Fn(i64, &mut App) + Clone + 'static,
 ) -> impl IntoElement {
+    stepper_with_edit(id, value, on_step, None)
+}
+
+/// A stepper whose value can also be typed: clicking it calls `on_edit`, which asks for one.
+fn editable_stepper(
+    id: &str,
+    value: String,
+    on_step: impl Fn(i64, &mut App) + Clone + 'static,
+    on_edit: impl Fn(&mut App) + 'static,
+) -> impl IntoElement {
+    stepper_with_edit(id, value, on_step, Some(Box::new(on_edit)))
+}
+
+type OnEdit = Box<dyn Fn(&mut App)>;
+
+fn stepper_with_edit(
+    id: &str,
+    value: String,
+    on_step: impl Fn(i64, &mut App) + Clone + 'static,
+    on_edit: Option<OnEdit>,
+) -> impl IntoElement {
     let dec = on_step.clone();
     let inc = on_step;
     let btn = |id: String, glyph: &str| {
@@ -253,16 +274,42 @@ fn stepper(
         .child(btn(format!("{id}-dec"), "−").on_click(move |_, _, cx| dec(-1, cx)))
         .child(
             div()
+                .id(SharedString::from(format!("{id}-value")))
                 .min_w(px(64.0))
+                .h(px(22.0))
                 .px_2()
                 .flex()
+                .items_center()
                 .justify_center()
                 .font_family("Menlo")
                 .text_size(px(11.5))
                 .text_color(c(t().text))
-                .child(value),
+                .child(value)
+                .when_some(on_edit, |d, edit| {
+                    d.cursor_pointer()
+                        .hover(|d| d.bg(c(t().hover)))
+                        .on_click(move |_, _, cx| edit(cx))
+                }),
         )
         .child(btn(format!("{id}-inc"), "+").on_click(move |_, _, cx| inc(1, cx)))
+}
+
+/// One step of `step` from `cur`, within `min..=max`. A typed value with a fraction
+/// steps to a whole number first: 97.5 goes to 98 or 97.
+fn step_value(cur: f64, dir: i64, step: f64, min: f64, max: f64) -> f64 {
+    let base = if dir > 0 { cur.floor() } else { cur.ceil() };
+    (base + dir as f64 * step).clamp(min, max)
+}
+
+/// A number typed into a prompt: `97`, `97.5`, `97,5`, `%97`, `60s`.
+pub(crate) fn parse_number(text: &str) -> Option<f64> {
+    let text = text
+        .trim()
+        .trim_start_matches('%')
+        .trim_end_matches(|ch: char| ch.is_alphabetic() || ch == '%' || ch.is_whitespace())
+        .trim()
+        .replace(',', ".");
+    text.parse::<f64>().ok().filter(|v| v.is_finite())
 }
 
 pub(crate) fn button(
@@ -443,28 +490,31 @@ fn cfg_bool(list: Option<&ConfigList>, key: &str) -> bool {
     cfg(list, key).and_then(|v| v.as_bool()).unwrap_or(false)
 }
 
+/// A cswap number setting: − and + step by `step`, and clicking the value asks for any
+/// value in `min..=max`. `title` heads that prompt.
 // A flat argument list reads better at the call sites than a one-off options struct.
 #[expect(clippy::too_many_arguments)]
 fn num_setting(
     id: &'static str,
     key: &'static str,
+    title: &'static str,
     list: Option<&ConfigList>,
     default: f64,
     step: f64,
     min: f64,
     max: f64,
-    unit: &str,
+    unit: &'static str,
 ) -> impl IntoElement {
     let cur = cfg_num(list, key, default);
-    let shown = if unit.is_empty() {
-        format!("{cur:.0}")
-    } else {
-        format!("{cur:.0}{unit}")
-    };
-    stepper(id, shown, move |dir, cx| {
-        let next = (cur + dir as f64 * step).clamp(min, max);
-        crate::set_cswap_config(cx, key.to_string(), Some(format!("{next:.0}")));
-    })
+    editable_stepper(
+        id,
+        format!("{}{unit}", cswap::num(cur)),
+        move |dir, cx| {
+            let next = step_value(cur, dir, step, min, max);
+            crate::set_cswap_config(cx, key.to_string(), Some(cswap::num(next)));
+        },
+        move |cx| crate::edit_cswap_number(cx, key, title, cur, min, max, unit),
+    )
 }
 
 // ---------- pages ----------
@@ -765,6 +815,49 @@ fn labelled_toggle(label: &str, toggle: impl IntoElement) -> impl IntoElement {
         .child(toggle)
 }
 
+/// Where auto-switch leaves account `n`: its own point (`cswap threshold`), or the global
+/// one, shown as the default.
+fn account_threshold(n: u32, own: Option<f64>, global: f64) -> impl IntoElement {
+    let cur = own.unwrap_or(global);
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(
+            div()
+                .text_size(px(11.0))
+                .text_color(c(t().secondary))
+                .child(l("Switch at", "Geçiş eşiği")),
+        )
+        .child(editable_stepper(
+            &format!("acc-threshold-{n}"),
+            format!("{}%", cswap::num(cur)),
+            move |dir, cx| {
+                let next = step_value(cur, dir, 1.0, cswap::THRESHOLD_MIN, cswap::THRESHOLD_MAX);
+                crate::set_account_threshold(cx, n, Some(next))
+            },
+            move |cx| crate::edit_account_threshold(cx, n, global),
+        ))
+        .child(match own {
+            Some(_) => action(
+                format!("acc-threshold-reset-{n}"),
+                &lf!(
+                    "Use default ({}%)",
+                    "Varsayılana dön ({}%)",
+                    cswap::num(global)
+                ),
+                t().secondary,
+                move |cx| crate::set_account_threshold(cx, n, None),
+            )
+            .into_any_element(),
+            None => div()
+                .text_size(px(11.0))
+                .text_color(c(t().tertiary))
+                .child(l("default", "varsayılan"))
+                .into_any_element(),
+        })
+}
+
 fn account_settings_row(
     acc: &crate::cswap::Account,
     s: &AppState,
@@ -806,6 +899,11 @@ fn account_settings_row(
     } else {
         t().secondary
     };
+    // shown while the account rotates, and whenever it has its own point to clear
+    let switch_at = (enabled || acc.threshold.is_some()).then(|| {
+        let global = cfg_num(s.cswap_config.as_ref(), "autoswitch.threshold", 90.0);
+        account_threshold(n, acc.threshold, global)
+    });
     div()
         .flex()
         .flex_col()
@@ -867,6 +965,7 @@ fn account_settings_row(
                         )),
                 ),
         )
+        .when_some(switch_at, |d, line| d.child(line))
         .child(
             div()
                 .flex()
@@ -969,7 +1068,7 @@ fn page_accounts(s: &AppState) -> impl IntoElement {
         .flex()
         .flex_col()
         .child(heading(l("Managed accounts", "Yönetilen hesaplar")))
-        .child(div().text_size(px(11.0)).text_color(c(t().secondary)).mb_2().child(l("“Show in menu” only hides a row in this app. “Auto-rotation” runs `cswap enable/disable`, which keeps the account out of cswap's automatic switching.", "“Menüde göster” yalnızca bu uygulamadaki satırı gizler. “Otomatik rotasyon” `cswap enable/disable` çalıştırır; kapalıysa hesap cswap'ın otomatik geçişlerine katılmaz.")));
+        .child(div().text_size(px(11.0)).text_color(c(t().secondary)).mb_2().child(l("“Show in menu” only hides a row in this app. “Auto-rotation” runs `cswap enable/disable`, which keeps the account out of cswap's automatic switching. “Switch at” is the usage at which auto-switch leaves the account (`cswap threshold`); by default it's the one on the Auto-switch page.", "“Menüde göster” yalnızca bu uygulamadaki satırı gizler. “Otomatik rotasyon” `cswap enable/disable` çalıştırır; kapalıysa hesap cswap'ın otomatik geçişlerine katılmaz. “Geçiş eşiği”, otomatik geçişin hesaptan ayrıldığı kullanım oranıdır (`cswap threshold`); varsayılanı Otomatik geçiş sayfasındaki eşiktir.")));
     for w in warnings {
         // drop cswap's CLI advice; "Sign in again" on the row does it
         let text = duplicate_warning(&w);
@@ -1042,11 +1141,11 @@ fn page_autoswitch(s: &AppState) -> impl IntoElement {
         .child(heading(l("Thresholds", "Eşikler")))
         .child(div().text_size(px(11.0)).text_color(c(t().secondary)).mb_2().child(l("These are cswap's own settings (`cswap config`). They drive `cswap auto`; run `cswap auto` or `cswap menubar --install-service` to have switching happen automatically.", "Bunlar cswap'ın kendi ayarları (`cswap config`) ve `cswap auto`'yu yönetir. Geçişlerin otomatik olması için `cswap auto` ya da `cswap menubar --install-service` çalıştır.")))
         .child(group(vec![
-            row(l("Switch at", "Geçiş eşiği"), Some(l("Switch when the binding 5h/7d window reaches this much used.", "Belirleyici 5h/7d penceresi bu kadar kullanılınca geç.")), num_setting("threshold", "autoswitch.threshold", list, 90.0, 5.0, 50.0, 99.0, "%")),
-            row(l("Hysteresis", "Histerezis"), Some(l("A target must beat the active account by this many points.", "Hedef hesap aktif hesabı bu kadar puan geçmeli.")), num_setting("hyst", "autoswitch.hysteresisPct", list, 10.0, 1.0, 0.0, 50.0, "%")),
-            row(l("Poll interval", "Sorgu aralığı"), Some(l("For the `cswap auto` loop.", "`cswap auto` döngüsü için.")), num_setting("interval", "autoswitch.intervalSeconds", list, 60.0, 15.0, 15.0, 900.0, "s")),
-            row(l("Cooldown", "Bekleme süresi"), Some(l("Minimum time between proactive switches.", "Kendiliğinden yapılan iki geçiş arasındaki en kısa süre.")), num_setting("cooldown", "autoswitch.cooldownSeconds", list, 300.0, 60.0, 0.0, 3600.0, "s")),
-            row(l("Unhealthy after", "Sağlıksız sayma"), Some(l("Consecutive failed polls before an account is skipped.", "Bir hesap atlanmadan önceki art arda başarısız sorgu sayısı.")), num_setting("unhealthy", "autoswitch.unhealthyTicks", list, 3.0, 1.0, 1.0, 20.0, l(" polls", " sorgu"))),
+            row(l("Switch at", "Geçiş eşiği"), Some(l("Switch when the binding 5h/7d window reaches this much used. Click the value to type one; an account can have its own in Accounts.", "Belirleyici 5h/7d penceresi bu kadar kullanılınca geç. Değeri yazmak için üstüne tıkla; hesaba özel eşik Hesaplar sayfasında.")), num_setting("threshold", "autoswitch.threshold", l("Switch at", "Geçiş eşiği"), list, 90.0, 1.0, cswap::THRESHOLD_MIN, cswap::THRESHOLD_MAX, "%")),
+            row(l("Hysteresis", "Histerezis"), Some(l("A target must beat the active account by this many points.", "Hedef hesap aktif hesabı bu kadar puan geçmeli.")), num_setting("hyst", "autoswitch.hysteresisPct", l("Hysteresis", "Histerezis"), list, 10.0, 1.0, 0.0, 50.0, "%")),
+            row(l("Poll interval", "Sorgu aralığı"), Some(l("For the `cswap auto` loop.", "`cswap auto` döngüsü için.")), num_setting("interval", "autoswitch.intervalSeconds", l("Poll interval", "Sorgu aralığı"), list, 60.0, 15.0, 15.0, 3600.0, "s")),
+            row(l("Cooldown", "Bekleme süresi"), Some(l("Minimum time between proactive switches.", "Kendiliğinden yapılan iki geçiş arasındaki en kısa süre.")), num_setting("cooldown", "autoswitch.cooldownSeconds", l("Cooldown", "Bekleme süresi"), list, 300.0, 60.0, 0.0, 86400.0, "s")),
+            row(l("Unhealthy after", "Sağlıksız sayma"), Some(l("Consecutive failed polls before an account is skipped.", "Bir hesap atlanmadan önceki art arda başarısız sorgu sayısı.")), num_setting("unhealthy", "autoswitch.unhealthyTicks", l("Unhealthy after", "Sağlıksız sayma"), list, 3.0, 1.0, 1.0, 100.0, l(" polls", " sorgu"))),
         ]))
         .child(heading(l("Strategy", "Strateji")))
         .child(group(vec![
@@ -1330,5 +1429,35 @@ impl Render for SettingsRoot {
                             .child(content),
                     ),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn steps_to_whole_numbers_within_range() {
+        assert_eq!(step_value(94.0, 1, 1.0, 50.0, 99.9), 95.0);
+        assert_eq!(step_value(97.5, 1, 1.0, 50.0, 99.9), 98.0);
+        assert_eq!(step_value(97.5, -1, 1.0, 50.0, 99.9), 97.0);
+        assert_eq!(step_value(99.0, 1, 1.0, 50.0, 99.9), 99.9);
+        assert_eq!(step_value(99.9, -1, 1.0, 50.0, 99.9), 99.0);
+        assert_eq!(step_value(50.0, -1, 1.0, 50.0, 99.9), 50.0);
+        assert_eq!(step_value(300.0, 1, 60.0, 0.0, 86400.0), 360.0);
+    }
+
+    #[test]
+    fn parses_typed_numbers() {
+        assert_eq!(parse_number("97"), Some(97.0));
+        assert_eq!(parse_number(" 97,5 "), Some(97.5));
+        assert_eq!(parse_number("%96"), Some(96.0));
+        assert_eq!(parse_number("98 %"), Some(98.0));
+        assert_eq!(parse_number("60s"), Some(60.0));
+        assert_eq!(parse_number("3 polls"), Some(3.0));
+        assert_eq!(parse_number(""), None);
+        assert_eq!(parse_number("abc"), None);
+        assert_eq!(parse_number("inf"), None);
+        assert_eq!(parse_number("NaN"), None);
     }
 }

@@ -94,6 +94,10 @@ pub struct Account {
     /// sign-in (ISO-8601, cswap 0.27+). Absent when Claude Code didn't record it.
     #[serde(default, deserialize_with = "lenient")]
     pub login_expires_at: Option<String>,
+    /// The account's own auto-switch point, percent used (`cswap threshold`, cswap
+    /// 1.0+). Absent when the account follows `autoswitch.threshold`.
+    #[serde(default, deserialize_with = "lenient")]
+    pub threshold: Option<f64>,
     /// `usage` holds `last_good_usage` because the latest fetch failed.
     #[serde(skip)]
     pub stale: bool,
@@ -488,6 +492,26 @@ pub fn set_alias(number: u32, alias: Option<&str>) -> Result<(), String> {
     .map(|_| ())
 }
 
+/// The range cswap takes for an auto-switch point, globally or per account (percent used).
+pub const THRESHOLD_MIN: f64 = 50.0;
+pub const THRESHOLD_MAX: f64 = 99.9;
+
+/// A number as cswap takes it and Swapbar shows it: `94`, `99.9`, at most two decimals.
+pub fn num(v: f64) -> String {
+    format!("{}", (v * 100.0).round() / 100.0)
+}
+
+/// Give an account its own auto-switch point (percent used), or with `None` return it to
+/// `autoswitch.threshold`.
+pub fn set_threshold(number: u32, pct: Option<f64>) -> Result<(), String> {
+    let n = number.to_string();
+    match pct {
+        Some(p) => run(&["threshold", &n, &num(p)]),
+        None => run(&["threshold", &n, "--unset"]),
+    }
+    .map(|_| ())
+}
+
 /// Update claude-swap with the tool that installed it (`uv tool` or `pipx`).
 pub fn upgrade() -> Result<(), String> {
     run(&["upgrade"]).map(|_| ())
@@ -560,13 +584,21 @@ mod tests {
          },
          "usageFetchedAt": "2026-10-18T19:18:21Z", "usageAgeSeconds": 224.4},
         {"number": 2, "email": "b@x.com", "organizationName": "", "active": true, "disabled": true,
-         "usage": {"fiveHour": {"pct": 2.0}, "spend": {"used": 1.5, "limit": 10, "pct": 15, "currency": "USD"}}},
+         "threshold": 97.5, "usage": {"fiveHour": {"pct": 2.0}, "spend": {"used": 1.5, "limit": 10, "pct": 15, "currency": "USD"}}},
         {"number": 3, "email": "c@x.com", "usageStatus": "token expired"},
         {"number": 4, "email": "d@x.com", "usageStatus": "unavailable", "usage": null,
          "lastGoodUsage": {"fiveHour": {"pct": 0.0}, "sevenDay": {"pct": 63.0, "countdown": "1d 14h"}},
          "lastGoodFetchedAt": "2026-10-19T07:47:16Z", "lastGoodAgeSeconds": 16875.8}
       ]
     }"#;
+
+    #[test]
+    fn formats_numbers_for_cswap() {
+        assert_eq!(num(94.0), "94");
+        assert_eq!(num(99.9), "99.9");
+        assert_eq!(num(97.125), "97.13");
+        assert_eq!(num(86400.0), "86400");
+    }
 
     #[test]
     fn parses_list_json() {
@@ -592,6 +624,8 @@ mod tests {
 
         let b = &list.accounts[1];
         assert!(b.active && b.disabled);
+        assert_eq!(b.threshold, Some(97.5));
+        assert_eq!(a.threshold, None);
         assert_eq!(b.org_tag(), "personal");
         assert_eq!(
             b.usage.as_ref().unwrap().spend.as_ref().unwrap().limit,
