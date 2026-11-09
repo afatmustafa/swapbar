@@ -3,6 +3,17 @@
 All notable changes to Swapbar. The website shows the same notes at
 [swapbar.afat.me/changelog](https://swapbar.afat.me/changelog).
 
+## Unreleased
+
+### Added
+
+- **A switch point per account.** Settings › Accounts gives each account in auto-rotation its own **Switch at** value, which replaces the Auto-switch threshold for that account only (`cswap threshold`, in claude-swap 1.0). **Use default** puts it back on the global one.
+- **Type a value.** Click the number in a stepper on the Auto-switch page, or an account's switch point, to type any value, such as 97.5.
+
+### Changed
+
+- The auto-switch threshold steps by 1 instead of 5 and goes up to 99.9%, the most cswap takes. Steps of 5 left values like 96 to 98 out of reach.
+
 ## 0.4.1
 
 ### Fixed
